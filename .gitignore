@@ -1,0 +1,40 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Downloaded at install/build time (see README)
+third_party/
+models/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Local data, secrets and build output
+data/
+exports/
+baseline/
+release/
+.env
+.env.local
+*.tar.gz
+
+# Web
+web/node_modules/
+web/dist/
+web/.npm-cache/
+web/test-results/
+web/playwright-report/
+web/design-ref/
+web/*.tsbuildinfo
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
+
+# Internal notes
+web/VERIFICATION.md
+web/API.md

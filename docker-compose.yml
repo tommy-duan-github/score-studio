@@ -1,0 +1,33 @@
+# Score Studio: `docker compose up -d --build`, then open http://localhost:19287
+# The first build downloads PyTorch (CPU), DuET + its weights and Transkun, so it takes a while.
+services:
+  score-studio:
+    build: .
+    image: score-studio:1.1.0
+    container_name: score-studio
+    restart: unless-stopped
+    ports:
+      - "19287:19287"
+    volumes:
+      - ./data:/data            # projects, edit history, settings (incl. the DeepSeek key if entered in the app)
+      - ./exports:/exports      # MusicXML / MIDI written by the MCP export tool
+      # Optional: a folder you (or an agent) drop audio/MIDI into; MCP can transcribe straight from it.
+      # - /path/to/to-transcribe:/import:ro
+    environment:
+      PUID: "1000"              # owner of ./data and ./exports (`id -u` / `id -g`)
+      PGID: "1000"
+      # Default performance preset until you change it in the app: eco | balanced | full
+      SCORE_STUDIO_PERF_PRESET: "balanced"
+      # SCORE_STUDIO_PASSWORD: "CHANGE-ME"        # optional Basic auth for the web UI/API (any username)
+      # DEEPSEEK_API_KEY: "your-key"              # optional; or paste it in Assistant > setup
+
+      # MCP for AI agents: setting a token (16+ characters, e.g. `openssl rand -base64 32`)
+      # turns on http://<host>:19287/mcp. Never expose /mcp to the internet.
+      SCORE_STUDIO_MCP_TOKEN: ""
+      # SCORE_STUDIO_MCP_ALLOW_PRIVATE_URLS: "1"  # let MCP url uploads fetch from LAN hosts
+      # SCORE_STUDIO_ALLOWED_HOSTS: "music.example.com"   # extra hostnames, e.g. behind a reverse proxy
+
+    # Optional hard caps. The in-app Performance dialog limits cores/priority inside these.
+    # A long audio file uses ~2-3 GB of RAM while transcribing.
+    # cpus: "3.0"
+    # mem_limit: "4g"

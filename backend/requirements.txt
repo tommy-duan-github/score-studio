@@ -1,0 +1,19 @@
+# Install order (see README): torch/torchaudio first (CPU or CUDA build), then:
+#   pip install "duet-score[test] @ https://github.com/wei-zeng98/DuET/archive/6ac226b28206512eadd15be49579f04e00550759.tar.gz"
+#   pip install --no-deps transkun==2.0.1   (ncls is only needed for training)
+#   pip install -r backend/requirements.txt
+pretty-midi
+scipy
+mir-eval
+pydub
+soxr
+moduleconf
+tqdm
+torch-optimizer
+matplotlib
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+verovio
+psutil

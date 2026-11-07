@@ -1,0 +1,29 @@
+{
+  "name": "score-studio",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/vite.mjs dev",
+    "build": "tsc -b && node scripts/vite.mjs build",
+    "preview": "node scripts/vite.mjs preview",
+    "dev:mock": "node scripts/vite.mjs dev --mode mock",
+    "test:smoke": "playwright test"
+  },
+  "dependencies": {
+    "@tonejs/midi": "^2.0.28",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tone": "^15.1.22",
+    "verovio": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.6.3",
+    "vite": "^5.4.11",
+    "@playwright/test": "^1.49.0"
+  }
+}
