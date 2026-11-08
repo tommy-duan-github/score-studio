@@ -33,7 +33,7 @@ GRIDS = (2, 3, 4, 6, 8, 12)
 def find_runs(notes, max_gap=F(1, 3), min_events=8, max_size=2):
     """[(staff, [event])]; an event is the list of non-grace notes on one onset"""
     runs = []
-    for st in (0, 1):
+    for st in sorted({n['staff'] for n in notes}):
         groups = {}
         for n in notes:
             if n['staff'] == st and not n['grace']:

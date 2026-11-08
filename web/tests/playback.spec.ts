@@ -27,7 +27,7 @@ test('score sampler playback, sounding notes, keyboard pause and seek', async ({
   let samples = 0;
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.route('https://tonejs.github.io/audio/salamander/**', async route => {
+  await page.route('**/samples/salamander/**', async route => {
     samples += 1;
     await route.fulfill({ body: sample(), contentType: 'audio/wav', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
@@ -48,9 +48,9 @@ test('score sampler playback, sounding notes, keyboard pause and seek', async ({
 });
 
 test('sample failures produce a recoverable error toast', async ({ page }) => {
-  await page.route('https://tonejs.github.io/audio/salamander/**', route => route.abort());
+  await page.route('**/samples/salamander/**', route => route.abort());
   await page.goto('/?mock=1');
-  await expect(page.getByLabel('Project title')).toHaveValue('Winter Wind');
+  await expect(page.getByLabel('Project title')).toHaveText('Winter Wind');
   await page.getByRole('button', { name: 'Play', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Could not load piano samples');
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
@@ -66,11 +66,17 @@ test('non-Chromium optics fallback and system theme tracking', async ({ browser 
   });
   const page = await context.newPage();
   await page.goto('http://127.0.0.1:5174/?mock=1');
-  await expect(page.getByLabel('Project title')).toHaveValue('Winter Wind');
+  await expect(page.getByLabel('Project title')).toHaveText('Winter Wind');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('.inspector-tabs')).toHaveClass(/lens-fallback/);
   await expect(page.locator('.blob').first()).toHaveCSS('animation-name', 'none');
+  // Wait for the initial WASM engraving before checking the media-query change event.
+  await expect(page.locator('.paper svg').first()).toBeVisible({ timeout: 90000 });
+  await expect(page.locator('.render-status')).toHaveCount(0);
+  await page.bringToFront();
   await page.emulateMedia({ colorScheme: 'light' });
+  // Chromium dispatches matchMedia changes during rendering; flush that turn before asserting.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await context.close();
 });

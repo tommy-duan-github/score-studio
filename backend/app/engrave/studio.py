@@ -59,6 +59,10 @@ def _phase1(inp, cfg: Config, title: str) -> Phase1:
     logf = io.StringIO()
     log = lambda s: print(s, file=logf)
     ctx = Ctx(cfg=cfg, log=log, title=title)
+    from .parts import score_parts, validate
+    if inp.parts is not None:
+        validate(inp)
+    ctx.parts = score_parts(inp)
     z = inp.score
     on = np.array([p[0] for p in inp.perf])
     M, q_model, qd_model, to_old, model_bars = analyse_meter(z, on, log)
@@ -237,6 +241,7 @@ def render(inp, p1: Phase1, cfg: Config, edits: dict | None = None) -> Result:
         n = _new_note(int(a['id']), a['pitch'], on, dur, int(a.get('staff', 0)), tm0.sec(on))
         if a.get('vpin'):
             n['vpin'] = int(a['vpin'])
+        n['part'] = next(p['id'] for p in ctx.parts if n['staff'] + 1 in p['staves'])
         n['edited'] = ['added']
         o = nov.get(n['id'])
         if o and o.get('deleted'):
@@ -276,14 +281,31 @@ def render(inp, p1: Phase1, cfg: Config, edits: dict | None = None) -> Result:
             n['spell'] = tuple(o['spell'])
     set_key(Counter(ctx.keys).most_common(1)[0][0])
 
-    notes, stats = playability(notes, ctx)
-    stats['cross_over'] = cross_over(notes, ctx)
-    for n in notes:
-        o = nov.get(n['id'])
-        if o and 'staff' in o:
-            n['staff'] = int(o['staff'])
-        if o and o.get('vpin'):
-            n['vpin'] = int(o['vpin'])
+    if inp.parts is not None:
+        from .parts import layout
+        plan = layout(notes, inp, ctx, p1.G, nov, _piano_layout)
+        notes = plan.notes
+    else:
+        notes, stats = playability(notes, ctx)
+        stats['cross_over'] = cross_over(notes, ctx)
+        for n in notes:
+            o = nov.get(n['id'])
+            if o and 'staff' in o:
+                n['staff'] = int(o['staff'])
+            if o and o.get('vpin'):
+                n['vpin'] = int(o['vpin'])
+        plan = _piano_layout(notes, ctx)
+        notes = plan.notes
+        plan.dirs = directions(plan, inp, p1.G, ctx)
+    review_mod.displaced(notes, ctx, rv)
+    xml = write(plan, ctx, None)
+
+    doc = build_doc(inp, ctx, plan, notes, deleted_rows, rv, base_by_id, edits)
+    return Result(xml=xml, doc=doc, log=logf.getvalue())
+
+
+def _piano_layout(notes, ctx):
+    cfg = ctx.cfg
     for n in notes:
         if n['grace']:
             n.setdefault('layer', 0)
@@ -328,12 +350,7 @@ def render(inp, p1: Phase1, cfg: Config, edits: dict | None = None) -> Result:
         plan.grace_by[k].sort(key=lambda n: n['pitch'])
     plan.ott = {0: ottava_runs(plan, 0, *cfg.ottava_rh, ctx), 1: ottava_runs(plan, 1, *cfg.ottava_lh, ctx)}
     plan.ott_bassa = ottava_bassa_runs(plan, ctx)
-    plan.dirs = directions(plan, inp, p1.G, ctx)
-    review_mod.displaced(notes, ctx, rv)
-    xml = write(plan, ctx, None)
-
-    doc = build_doc(inp, ctx, plan, notes, deleted_rows, rv, base_by_id, edits)
-    return Result(xml=xml, doc=doc, log=logf.getvalue())
+    return plan
 
 
 # ----------------------------------------------------------------------------- document
@@ -356,7 +373,7 @@ def build_doc(inp, ctx, plan, notes, deleted_rows, rv, base_by_id, edits):
         i = n['id']
         po, pf = (perf[i][0], perf[i][1]) if i < len(perf) and not n.get('added') else (n['t'], n['t'])
         return dict(id=i, pitch=int(n['pitch']), name=spell_name(step, alt, octv), spell=[step, alt],
-                    staff=int(n['staff']) + 1, voice=int(n.get('vnum', 1)),
+                    part=n.get('part', 'P1'), staff=int(n['staff']) + 1, voice=int(n.get('vnum', 1)),
                     on=round(float(n['on']), 6), dur=round(float(n['dur']), 6), measure=m,
                     beat=round(float(n['on'] - ctx.bars.start(m)), 6), grace=bool(n['grace']),
                     deleted=deleted, added=bool(n.get('added')),
@@ -388,7 +405,7 @@ def build_doc(inp, ctx, plan, notes, deleted_rows, rv, base_by_id, edits):
     doc = dict(
         meta=dict(tempo=getattr(plan, 'base_bpm', None), bars=ctx.nbars, pickup=float(ctx.pickup),
                   notes=len(notes), meter=f"{ctx.num}/{ctx.beat_type}"),
-        measures=measures, notes=out, timemap=timemap, review=review,
+        parts=copy.deepcopy(ctx.parts), measures=measures, notes=out, timemap=timemap, review=review,
         _review_raw={it['id']: it for it in rv.items},
     )
     return doc

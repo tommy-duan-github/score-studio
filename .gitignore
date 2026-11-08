@@ -38,3 +38,4 @@ web/*.tsbuildinfo
 # Internal notes
 web/VERIFICATION.md
 web/API.md
+.venv-mt3/

@@ -55,3 +55,6 @@ install, build or run time and keeps its own license.
 ## Tools
 
 - **FFmpeg** (installed separately, or from Debian in the Docker image): LGPL/GPL depending on the build.
+- **YourMT3+** (optional, multi-instrument mode): https://github.com/mimbres/YourMT3 and
+  https://huggingface.co/mimbres/YourMT3 (code: Hugging Face space `mimbres/YourMT3`). Apache-2.0. Downloaded by
+  `backend/mt3/download.py`; not stored in this repo.

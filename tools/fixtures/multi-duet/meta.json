@@ -1,0 +1,25 @@
+{
+ "id": "mduet001",
+ "title": "Violin piano duet",
+ "created": "2026-11-08T03:00:00Z",
+ "source": "midi",
+ "source_file": "source.mid",
+ "original_name": "piano violin test.mp3",
+ "status": "ready",
+ "progress": null,
+ "error": null,
+ "settings": {
+  "max_voices": 3,
+  "auto_keys": true,
+  "auto_spelling": true,
+  "auto_runs": true,
+  "hand_span": 14,
+  "show_pedal": false,
+  "show_dynamics": true,
+  "show_tempo": true
+ },
+ "version": 1,
+ "bars": null,
+ "instruments": "multi",
+ "mt3_model": "moe-nops"
+}

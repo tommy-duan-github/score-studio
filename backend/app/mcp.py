@@ -135,7 +135,7 @@ def tool(name, title, description, properties=None, required=(), read_only=False
 
 def summary(p: store.Project) -> dict:
     d = p.public()
-    return {k: d[k] for k in ("id", "title", "source", "status", "created", "bars", "version", "error")} | \
+    return {k: d[k] for k in ("id", "title", "source", "status", "created", "bars", "version", "error", "instruments", "parts")} | \
         dict(progress=(d.get("progress") or {}).get("fraction"), message=(d.get("progress") or {}).get("message"))
 
 
@@ -257,18 +257,29 @@ def _download(url: str) -> tuple[str, io.BytesIO]:
     raise ValueError("Too many redirects.")
 
 
-@tool("create_project", "Transcribe a file", "Upload piano audio (mp3, wav, flac, m4a, ogg) or MIDI and start transcribing it "
+@tool("create_project", "Transcribe a file", "Upload audio (mp3, wav, flac, m4a, ogg) or MIDI and start transcribing it "
       "into an editable score. Give exactly one of import_path, url or file_base64 (with filename). Returns the project id; "
       "then call wait_for_project. Audio takes minutes on a CPU.",
       dict(import_path=s(1000, 1, "File path relative to the import folder (see list_import_files)."),
            url=s(4000, 1, "http(s) link to an audio or MIDI file (max 100 MB)."),
            file_base64=s(MAX_BODY, 1, "File content, base64 encoded (max 100 MB decoded)."),
            filename=s(255, 1, "Original file name with extension; required with file_base64."),
-           title=s(200, 1, "Project title; default: the file name.")), open_world=True)
+           title=s(200, 1, "Project title; default: the file name."),
+           instruments=e(["piano", "multi"], "'piano' (default): one piano part (Transkun). 'multi' (experimental): one "
+                         "score part per instrument, detected by YourMT3+ (audio) or taken from the MIDI tracks."),
+           model=s(40, 1, "YourMT3+ checkpoint key for instruments='multi' audio (see GET /api/health multi.models).")),
+      open_world=True)
 def t_create(a):
     given = [k for k in ("import_path", "url", "file_base64") if k in a]
     if len(given) != 1:
         raise ValueError("Give exactly one of import_path, url or file_base64.")
+    instruments = a.get("instruments") or "piano"
+
+    def new(name, stream):
+        from . import models
+        models.require_ready()
+        model = service.check_mode(instruments, a.get("model"), name.lower().endswith((".mid", ".midi")))
+        return store.create(name, stream, a.get("title"), instruments, model)
     if "import_path" in a:
         if not IMPORT_DIR.is_dir():
             raise ValueError("No import folder is mounted (SCORE_STUDIO_IMPORT).")
@@ -278,10 +289,10 @@ def t_create(a):
         if f.stat().st_size > MAX_UPLOAD:
             raise ValueError("File is larger than 100 MB.")
         with f.open("rb") as fh:
-            p = store.create(f.name, fh, a.get("title"))
+            p = new(f.name, fh)
     elif "url" in a:
         name, buf = _download(a["url"])
-        p = store.create(name, buf, a.get("title"))
+        p = new(name, buf)
     else:
         if "filename" not in a:
             raise ValueError("filename is required with file_base64.")
@@ -291,7 +302,7 @@ def t_create(a):
             raise ValueError("file_base64 is not valid base64.")
         if len(raw) > MAX_UPLOAD:
             raise ValueError("File is larger than 100 MB.")
-        p = store.create(Path(a["filename"]).name, io.BytesIO(raw), a.get("title"))
+        p = new(Path(a["filename"]).name, io.BytesIO(raw))
     worker.submit(p.id)
     return summary(p)
 

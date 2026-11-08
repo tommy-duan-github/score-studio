@@ -23,12 +23,13 @@ def dedupe(notes, ctx):
     for n in sorted(notes, key=lambda n: (n['on'], n['grace'], -n['dur'])):
         if n['grace']:
             out.append(n); continue
-        if (n['staff'], n['on'], n['pitch']) in seen or (1 - n['staff'], n['on'], n['pitch']) in seen:
+        key = (n.get('part', 'P1'), n['on'], n['pitch'])
+        if key in seen:
             if n.get('added') or n.get('edited'):
                 out.append(n); continue
             ctx.log(f"duplicate removed p{n['pitch']} ({ctx.where(n['on'])})")
             continue
-        seen[(n['staff'], n['on'], n['pitch'])] = n
+        seen[key] = n
         out.append(n)
     return out
 

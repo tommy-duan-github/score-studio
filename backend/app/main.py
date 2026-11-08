@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import VERSION, engine, llm, mcp, perf, service, store, worker
+from . import VERSION, engine, llm, mcp, models, multi, perf, service, store, worker
 from .service import ServiceError
 
 app = FastAPI(title="Score Studio", version=VERSION)
@@ -101,7 +101,10 @@ def health():
     except Exception:
         cuda = False
     return dict(ok=True, version=VERSION, cuda=cuda, llm=llm.public_settings(), docker=perf.in_docker(),
-                mcp=bool(mcp.token()))
+                mcp=bool(mcp.token()), desktop=bool(os.environ.get("SCORE_STUDIO_DESKTOP")),
+                models_ready=models.ready(),
+                multi=dict(available=multi.available(), default=multi.default_model(),
+                           models=[dict(key=k, label=multi.MODELS[k]) for k in multi.installed_models()]))
 
 
 @app.get("/api/config/llm")
@@ -136,23 +139,82 @@ app.add_api_route("/mcp", mcp.handle, methods=["GET", "POST", "DELETE"], include
 
 
 # ----------------------------------------------------------------------------- projects
+@app.get("/api/instruments")
+def instruments():
+    """Instrument catalog for renaming / re-instrumenting parts (GM program, clef, single or grand staff)."""
+    return multi.catalog()
+
+
 @app.get("/api/projects")
 def list_projects():
     out = []
     for p in store.all_projects():
         d = p.public()
-        out.append({k: d[k] for k in ("id", "title", "created", "source", "status", "bars", "progress")})
+        out.append({k: d[k] for k in ("id", "title", "created", "source", "status", "bars", "progress", "instruments", "parts")})
     return out
 
 
 @app.post("/api/projects", status_code=201)
-async def create_project(file: UploadFile = File(...), title: str | None = Form(None)):
+async def create_project(file: UploadFile = File(...), title: str | None = Form(None),
+                         instruments: str = Form("piano"), model: str | None = Form(None)):
     try:
-        p = await run_in_threadpool(store.create, file.filename or "upload", file.file, title)
+        models.require_ready()
+        model = service.check_mode(instruments, model, (file.filename or "").lower().endswith((".mid", ".midi")))
+        p = await run_in_threadpool(store.create, file.filename or "upload", file.file, title, instruments, model)
+    except models.ModelsMissing as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
     worker.submit(p.id)
     return dict(id=p.id, status="queued")
+
+
+@app.post("/api/projects/delete")
+async def delete_projects(request: Request):
+    """Batch delete: {"ids": [...]} or {"all": true}."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(422, "JSON object expected")
+    if body.get("all") is True:
+        targets = store.all_projects()
+    elif isinstance(body.get("ids"), list) and all(isinstance(i, str) for i in body["ids"]):
+        targets = [p for p in (store.get(i) for i in body["ids"]) if p is not None]
+    else:
+        raise HTTPException(422, 'ids (list) or "all": true required')
+    for p in targets:
+        await run_in_threadpool(service.delete, p)
+    return dict(deleted=len(targets))
+
+
+# ----------------------------------------------------------------------------- models & storage
+@app.get("/api/models")
+def get_models():
+    return models.status()
+
+
+@app.post("/api/models/download", status_code=202)
+async def download_models(request: Request):
+    body = await request.json()
+    keys = body.get("keys") if isinstance(body, dict) else None
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        raise HTTPException(422, "keys (list of model keys) required")
+    try:
+        return models.download(keys)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/models/{key}/remove")
+def remove_model(key: str):
+    try:
+        return models.remove(key)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/storage")
+async def get_storage():
+    return await run_in_threadpool(models.storage)
 
 
 @app.get("/api/projects/{pid}")
@@ -164,9 +226,9 @@ def get_project(pid: str):
 async def patch_project(pid: str, request: Request):
     p = service.project(pid)
     body = await request.json()
-    if not isinstance(body, dict) or not ({"title", "header"} & body.keys()):
-        raise HTTPException(422, "title or header required")
-    fields = {k: body[k] for k in ("title", "header") if k in body}
+    if not isinstance(body, dict) or not ({"title", "header", "parts"} & body.keys()):
+        raise HTTPException(422, "title, header or parts required")
+    fields = {k: body[k] for k in ("title", "header", "parts") if k in body}
     return service.update_project(p, **fields).public()
 
 
@@ -177,9 +239,15 @@ def delete_project(pid: str):
 
 
 @app.post("/api/projects/{pid}/retry")
-def retry(pid: str):
+async def retry(pid: str, request: Request):
+    """Transcribe again; an optional JSON body {"instruments": "piano"|"multi", "model": key} switches the mode."""
     p = service.project(pid)
-    service.retry(p)
+    body = {}
+    if (await request.body()).strip():
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(422, "JSON object expected")
+    service.retry(p, body.get("instruments"), body.get("model"))
     return p.public()
 
 
@@ -238,6 +306,12 @@ async def export(pid: str, name: str):
         doc = await run_in_threadpool(service.doc, p)
         return Response(service.score_midi_bytes(doc), media_type="audio/midi",
                         headers={"Content-Disposition": f'attachment; filename="{title}.mid"'})
+    if name == "audio":
+        if p.meta()["source"] != "audio":
+            raise HTTPException(404, "This project has no audio")
+        src = p.source
+        return FileResponse(src, media_type=mimetypes.guess_type(src.name)[0] or "application/octet-stream",
+                            filename=f"{title}{src.suffix.lower()}")
     raise HTTPException(404, "Unknown export")
 
 
@@ -302,5 +376,17 @@ async def _err(request, exc):
     return JSONResponse({"detail": str(exc)}, status_code=500)
 
 
+class WebFiles(StaticFiles):
+    """The built UI. index.html (and other unhashed files) must be revalidated on every load, or a browser keeps
+    showing the previous version's UI after an upgrade; Vite's hashed /assets/* never change, so cache them."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 304):
+            hashed = path.replace("\\", "/").startswith("assets/")   # normpath gives backslashes on Windows
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable" if hashed else "no-cache"
+        return response
+
+
 if WEB.is_dir():
-    app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
+    app.mount("/", WebFiles(directory=WEB, html=True), name="web")

@@ -30,6 +30,13 @@ def quantize(inp, G, shift_at, ctx):
     FR = [F(0), F(1, 4), F(1, 2), F(3, 4), F(1)] if ctx.compound else GRID_FRACS
     shifts = np.array([shift_at(t) for t in on])
     q = N[:, 1] + shifts; qd = N[:, 2]; staff = N[:, 3].astype(int)
+    from .parts import score_parts
+    parts = score_parts(inp)
+    if inp.parts is not None:
+        staff = np.array([parts[pi]['staves'][0] - 1 + (
+            int(staff[i]) if parts[pi]['staves'] == [1, 2] else int(N[i, 0] < 60)
+        ) if parts[pi]['kind'] == 'grand' else parts[pi]['staves'][0] - 1
+            for i, pi in enumerate(inp.part_of)])
     if ctx.compound and cfg.compound_snap:
         # 6/8 / 12/8: 4/4 16ths rewritten x1.5 land on 32nds -> back to the 16th grid.
         # The model's own triplet / sextuplet positions are kept (rounding them to
@@ -64,6 +71,9 @@ def quantize(inp, G, shift_at, ctx):
                   q=float(q[i]), qd=float(qd[i]), vel=int(vel[i]), grace=bool(grace[i]),
                   roll=False, bass_grace=False, t=float(on[i])) for i in range(n)]
 
+    for nt in notes:
+        nt['part'] = parts[inp.part_of[nt['i']] if inp.part_of is not None else 0]['id']
+
     # ---- rolled chords ---------------------------------------------------------
     # Rolls placed by timing (the model gave the notes different positions, or a
     # position far from where the roll was played) only where the model positions
@@ -72,7 +82,7 @@ def quantize(inp, G, shift_at, ctx):
     # worse than the raw model with them off).
     in_fz = lambda grp: any(getattr(shift_at, 'free', lambda t: False)(on[k]) for k in grp)
     rolled = set()
-    for st in (0, 1):
+    for st in sorted(set(staff)):
         ids = sorted([k for k in range(n) if staff[k] == st and not grace[k]], key=lambda k: x[k])
         a = 0
         while a < len(ids):
@@ -245,7 +255,7 @@ def regular_runs(free, q, on, staff, mpos, x, cfg, ctx):
     tremolo), so the model's rhythm is kept for the whole run instead of
     re-snapping notes one by one."""
     protected = set()
-    for st in (0, 1):
+    for st in sorted(set(staff)):
         ks = [k for k in free if staff[k] == st]
         ev = {}
         for k in ks:                       # attacks = model positions with their notes

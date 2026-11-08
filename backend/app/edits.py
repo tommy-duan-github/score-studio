@@ -43,6 +43,8 @@ def apply_ops(state: dict, ops: list, doc: dict, raw_review: dict | None = None)
     st.setdefault("keys", {})
     st.setdefault("resolved", {})
     notes = {n["id"]: dict(n) for n in doc["notes"]}
+    parts = doc.get("parts") or [dict(id="P1", kind="grand", staves=[1, 2])]
+    staff_part = {s: p for p in parts for s in p["staves"]}
     measures = doc["measures"]
     pickup = doc["meta"].get("pickup", 0) > 0
 
@@ -70,9 +72,12 @@ def apply_ops(state: dict, ops: list, doc: dict, raw_review: dict | None = None)
         kind = op["op"]
         if kind == "set_staff":
             s = op.get("staff")
-            if s not in (1, 2):
-                raise EditError("staff must be 1 or 2")
+            if s not in staff_part:
+                raise EditError("staff must belong to a score part")
             for i in ids_of(op):
+                p = staff_part[notes[i]["staff"]]
+                if p["kind"] != "grand" or s not in p["staves"]:
+                    continue
                 ov(i)["staff"] = s - 1
                 notes[i]["staff"] = s
         elif kind == "set_voice":
@@ -143,8 +148,8 @@ def apply_ops(state: dict, ops: list, doc: dict, raw_review: dict | None = None)
             p, s = op.get("pitch"), op.get("staff", 1)
             if not isinstance(p, int) or not 21 <= p <= 108:
                 raise EditError("pitch must be a MIDI number 21..108")
-            if s not in (1, 2):
-                raise EditError("staff must be 1 or 2")
+            if s not in staff_part:
+                raise EditError("staff must belong to a score part")
             on, d = F(_f(op.get("on"))), F(_f(op.get("dur", 1)))
             if on < 0 or d <= 0:
                 raise EditError("bad onset/duration")
@@ -152,7 +157,8 @@ def apply_ops(state: dict, ops: list, doc: dict, raw_review: dict | None = None)
             v = op.get("voice")
             st["added"].append(dict(id=nid, pitch=p, on=str(on), dur=str(d), staff=s - 1,
                                     vpin=v if v in (1, 2, 3, 4) else None))
-            notes[nid] = dict(id=nid, pitch=p, on=float(on), dur=float(d), staff=s, measure=None)
+            notes[nid] = dict(id=nid, pitch=p, on=float(on), dur=float(d), staff=s,
+                              part=staff_part[s]["id"], measure=None)
         elif kind == "set_key":
             m, f = op.get("measure"), op.get("fifths")
             if not isinstance(m, int) or not 0 <= m < len(measures):
@@ -200,7 +206,8 @@ def _apply_review_edit(st, edit, notes, measures, pickup):
     for ne in edit.get("notes") or []:
         t, _, p = str(ne["id"]).partition(":")
         t, p = float(t), int(p)
-        match = [n for n in notes.values() if n.get("pitch") == p and abs(n.get("perf_on", -9) - t) < 0.0015]
+        match = [n for n in notes.values() if n.get("pitch") == p and abs(n.get("perf_on", -9) - t) < 0.0015
+                 and (ne.get("part") is None or n.get("part", "P1") == ne["part"])]
         for n in match:
             o = st["notes"].setdefault(str(n["id"]), {})
             if "grace" in ne:

@@ -38,7 +38,13 @@ export function useShortcuts({ doc, selected, busy, edit, undo, redo, toggle, cl
       }
       if (!selected.length || busy || modifier || event.altKey) return;
       let op: Op | undefined;
-      if (key === 'r' || key === 'l') op = { op: 'set_staff', ids: selected, staff: key === 'r' ? 1 : 2 };
+      if (key === 'r' || key === 'l') {
+        // Hands exist only in keyboard (grand-staff) parts; use that part's staves (global numbers).
+        const grand = doc?.notes.find(note => selected.includes(note.id)
+          && (!doc.parts || doc.parts.find(part => part.id === note.part)?.kind === 'grand'));
+        const staves = grand && doc?.parts ? doc.parts.find(part => part.id === grand.part)?.staves : [1, 2];
+        if (grand && staves) op = { op: 'set_staff', ids: selected, staff: staves[key === 'r' ? 0 : 1] };
+      }
       if (/^[1-4]$/.test(key)) op = { op: 'set_voice', ids: selected, voice: Number(key) };
       if (key === 'delete' || key === 'backspace') op = { op: 'delete', ids: selected };
       if (key === 'arrowup' || key === 'arrowdown') {

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
-import { lensFilter, lensSupported } from '../lib/lens';
+import { lensFilter, lensSupported, type LensOptions } from '../lib/lens';
 
 let definitions: SVGDefsElement | null = null;
 
@@ -25,11 +25,17 @@ export function useLens(value: string | number | undefined) {
     let suppressClick = false;
 
     function fit(option: HTMLButtonElement) {
-      const width = option.offsetWidth + 6;
+      // The rim bends and splits colour, so the label must stay clear of it: grow the lens
+      // past the button when a (bold) label nearly fills it.
+      const range = document.createRange();
+      range.selectNodeContents(option);
+      const label = range.getBoundingClientRect().width;
+      const width = Math.max(option.offsetWidth + 6, Math.ceil(label) + 26);
       const height = option.offsetHeight + 6;
+      const left = option.offsetLeft + option.offsetWidth / 2 - width / 2;
       thumb.style.width = `${width}px`;
       thumb.style.height = `${height}px`;
-      thumb.style.translate = `${option.offsetLeft - 3}px ${option.offsetTop - 3}px`;
+      thumb.style.translate = `${left}px ${option.offsetTop - 3}px`;
       group!.classList.toggle('lens-fallback', !lensSupported);
       if (lensSupported) {
         const id = lensFilter(getDefinitions(), width, height, height / 2);
@@ -118,5 +124,39 @@ export function useLens(value: string | number | undefined) {
       group.removeEventListener('click', click, true);
     };
   }, [value]);
+  return ref;
+}
+
+/** Clear liquid glass for a whole surface: no blur, the backdrop is only bent at the rim.
+ *  Sets --lens on the element (used by `.glass.clear::after`); browsers without SVG backdrop
+ *  filters keep a plain clear pane. */
+export function useClearGlass<T extends HTMLElement>(options: LensOptions = {}) {
+  const ref = useRef<T>(null);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || !lensSupported) return;
+    let frame = 0;
+    const fit = () => {
+      const { offsetWidth: width, offsetHeight: height } = element;
+      if (width < 2 || height < 2) return;
+      const radius = Math.min(height / 2, parseFloat(getComputedStyle(element).borderTopLeftRadius) || height / 2);
+      const id = lensFilter(getDefinitions(), width, height, radius, options);
+      if (id) element.style.setProperty('--lens', `url("#${id}")`);
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fit);
+    };
+    fit();
+    const size = new ResizeObserver(schedule);
+    size.observe(element);
+    const theme = new MutationObserver(schedule);
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => {
+      cancelAnimationFrame(frame);
+      size.disconnect();
+      theme.disconnect();
+    };
+  }, []);
   return ref;
 }

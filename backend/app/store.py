@@ -5,7 +5,7 @@ data/
   projects/<id>/
     meta.json                      (title, status, progress, settings, version, …)
     source.<ext>                   (uploaded file)
-    analysis/                      (DuET run: score.npz, frames.csv, performance.mid, …)
+    analysis/                      (DuET run: score.npz, frames.csv, …; parts.json for multi-instrument projects)
     performance.mid                (the performance MIDI that DuET read)
     history.json                   (edit states for undo/redo)
     score.musicxml                 (last engraving)
@@ -35,6 +35,8 @@ DEFAULT_SETTINGS = dict(max_voices=3, auto_keys=True, auto_spelling=True, auto_r
                         show_pedal=False, show_dynamics=True, show_tempo=True)
 # Title block on page 1 / in MusicXML exports. Empty title = the project title. Sizes: percent of normal text.
 DEFAULT_HEADER = dict(title="", subtitle="", composer="", title_size=250, subtitle_size=120, composer_size=110, show=True)
+
+INSTRUMENTS = ("piano", "multi")     # piano: Transkun + one piano part; multi: YourMT3+ (audio) / MIDI tracks -> parts
 
 _lock = threading.RLock()
 
@@ -123,13 +125,16 @@ class Project:
         m = self.meta()
         return dict(id=self.id, title=m["title"], source=m["source"], created=m["created"], status=m["status"],
                     progress=m.get("progress"), error=m.get("error"), has_audio=m["source"] == "audio",
-                    version=m.get("version", 0), bars=m.get("bars"))
+                    version=m.get("version", 0), bars=m.get("bars"), instruments=m.get("instruments", "piano"),
+                    mt3_model=m.get("mt3_model"), parts=m.get("parts"))
 
 
-def create(filename: str, data_stream, title: str | None) -> Project:
+def create(filename: str, data_stream, title: str | None, instruments: str = "piano", mt3_model: str | None = None) -> Project:
     ext = Path(filename).suffix.lower()
     if ext not in AUDIO_EXT | MIDI_EXT:
         raise ValueError(f"Unsupported file type {ext!r}")
+    if instruments not in INSTRUMENTS:
+        raise ValueError(f"instruments must be one of {', '.join(INSTRUMENTS)}")
     pid = secrets.token_hex(4)
     p = Project(pid)
     p.dir.mkdir(parents=True)
@@ -139,7 +144,8 @@ def create(filename: str, data_stream, title: str | None) -> Project:
     meta = dict(id=pid, title=title or Path(filename).stem, created=now(), source="audio" if ext in AUDIO_EXT else "midi",
                 source_file=src.name, original_name=filename, status="queued",
                 progress=dict(stage="queued", fraction=0.0, message="Waiting in queue…"), error=None,
-                settings=dict(DEFAULT_SETTINGS), version=0, bars=None)
+                settings=dict(DEFAULT_SETTINGS), version=0, bars=None, instruments=instruments,
+                mt3_model=mt3_model if instruments == "multi" else None)
     _atomic_write(p.meta_path, json.dumps(meta, indent=1))
     return p
 

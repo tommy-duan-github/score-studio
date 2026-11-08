@@ -19,7 +19,11 @@ def main() -> int:
         return 0
     except Exception as exc:
         traceback.print_exc()
-        p.update(status="error", error=f"{type(exc).__name__}: {exc}",
+        msg = f"{type(exc).__name__}: {exc}"
+        if "os error 1455" in msg or "paging file is too small" in msg.lower() or isinstance(exc, MemoryError):
+            msg = ("Not enough memory: Windows ran out of virtual memory (RAM + paging file). Close other apps, "
+                   "or let Windows manage the paging file size, then try again.")
+        p.update(status="error", error=msg,
                  progress=dict(stage="error", fraction=1.0, message="Failed"))
         return 1
 

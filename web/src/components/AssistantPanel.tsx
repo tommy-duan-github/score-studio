@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { useState } from 'react';
 import { Eye, Send } from 'lucide-react';
 import { api } from '../lib/api';
@@ -77,55 +78,55 @@ export function AssistantPanel({ doc, selected, busy, config, onConfig, edit, on
   }
 
   return <div className="assistant-panel">
-    <div className="panel-heading"><h2>Assistant</h2><InfoTip label="assistant">Ask about voicing, rhythm, spelling or readability. The selected note IDs, bar range and chat history are included. Preview a proposal to highlight affected notes; Apply makes one undoable edit.</InfoTip></div>
+    <div className="panel-heading"><h2>{t("Assistant")}</h2><InfoTip label={t("assistant")}>{t("Ask about voices, rhythm or notation using the selected notes and chat history. Preview highlights proposed changes; Apply saves one undoable edit.")}</InfoTip></div>
     {!config?.configured ? <form className="setup" onSubmit={event => {
       event.preventDefault();
       void configure();
     }}>
-      <div className="setup-heading"><h3>Connect DeepSeek</h3><InfoTip label="DeepSeek setup">Your key is saved by your local backend. Model and base URL can be changed for a compatible endpoint.</InfoTip></div>
-      <label className="field">API key<input type="password" required value={key} onChange={event => setKey(event.target.value)} autoComplete="off" placeholder="sk-…" /></label>
-      <label className="field">Model<input required value={model} onChange={event => setModel(event.target.value)} /></label>
-      <label className="field">Base URL<input required type="url" value={base} onChange={event => setBase(event.target.value)} /></label>
-      <button className="button primary small" disabled={asking || !key.trim()}>{asking ? 'Connecting…' : 'Connect assistant'}</button>
+      <div className="setup-heading"><h3>{t("Connect DeepSeek")}</h3><InfoTip label={t("DeepSeek setup")}>{t("Your key is saved by your local backend. Model and base URL can be changed for a compatible endpoint.")}</InfoTip></div>
+      <label className="field">{t("API key")}<input type="password" required value={key} onChange={event => setKey(event.target.value)} autoComplete="off" placeholder={t("sk-…")} /></label>
+      <label className="field">{t("Model")}<input required value={model} onChange={event => setModel(event.target.value)} /></label>
+      <label className="field">{t("Base URL")}<input required type="url" value={base} onChange={event => setBase(event.target.value)} /></label>
+      <button className="button primary small" disabled={asking || !key.trim()}>{asking ? t("Connecting…") : t("Connect assistant")}</button>
     </form> : <>
       <div className="chat-log" aria-live="polite">
         {chat.map((entry, index) => <div className={`chat-message ${entry.role}`} key={index}>
-          <small>{entry.role === 'user' ? 'You' : 'Assistant'}</small><p>{entry.content}</p>
+          <small>{entry.role === 'user' ? t("You") : t("Assistant")}</small><p>{entry.role === 'assistant' ? t(entry.content) : entry.content}</p>
           {entry.proposals?.map((proposal, proposalIndex) => {
             const id = `${index}:${proposalIndex}`;
             const done = applied.includes(id);
             return <article className="proposal" key={proposalIndex}>
-              <h3>{proposal.title}</h3><p>{proposal.explanation}</p>
-              {proposal.error && <p className="danger">{proposal.error}</p>}
+              <h3>{t(proposal.title)}</h3><p>{t(proposal.explanation)}</p>
+              {proposal.error && <p className="danger">{t(proposal.error)}</p>}
               <div className="two-actions">
-                <button className="button ghost small" disabled={!proposal.valid || !proposal.ops.length} onClick={() => onPreview(affectedNotes(doc, proposal.ops))}><Eye size={14} />Preview</button>
+                <button className="button ghost small" disabled={!proposal.valid || !proposal.ops.length} onClick={() => onPreview(affectedNotes(doc, proposal.ops))}><Eye size={14} />{t("Preview")}</button>
                 <button className="button primary small" disabled={!proposal.valid || busy || done || !proposal.ops.length}
                   onClick={async () => {
                     if (await edit(proposal.ops, proposal.title)) {
                       onPreview([]);
                       setApplied(current => [...current, id]);
                     }
-                  }}>{done ? 'Applied' : 'Apply'}</button>
+                  }}>{done ? t("Applied") : t("Apply")}</button>
               </div>
             </article>;
           })}
         </div>)}
-        {asking && <div className="assistant-status" role="status">Thinking…</div>}
+        {asking && <div className="assistant-status" role="status">{t("Thinking…")}</div>}
       </div>
       <form className="chat-compose" onSubmit={event => {
         event.preventDefault();
         void ask();
       }}>
-        <div className="context-chip chip">{selected.length ? `${selected.length} notes selected` : 'Whole score'}</div>
-        <label className="sr-only" htmlFor="assistant-message">Message to assistant</label>
-        <textarea id="assistant-message" placeholder="Ask about the score…" value={message} onChange={event => setMessage(event.target.value)}
+        <div className="context-chip chip">{selected.length ? t("{0} notes selected", [selected.length]) : t("Whole score")}</div>
+        <label className="sr-only" htmlFor="assistant-message">{t("Message to assistant")}</label>
+        <textarea id="assistant-message" placeholder={t("Ask about the score…")} value={message} onChange={event => setMessage(event.target.value)}
           onKeyDown={event => {
             if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
               event.preventDefault();
               void ask();
             }
           }} />
-        <button className="button primary small" disabled={asking || !message.trim()}>Send message<Send size={14} /></button>
+        <button className="button primary small" disabled={asking || !message.trim()}>{t("Send message")}<Send size={14} /></button>
       </form>
     </>}
   </div>;

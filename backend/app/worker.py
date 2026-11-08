@@ -1,4 +1,4 @@
-"""Background transcription queue: audio -> Transkun -> DuET -> first engraving.
+"""Background transcription queue: audio -> Transkun (or YourMT3+ for multi-instrument) -> DuET -> first engraving.
 
 One job at a time. Each job runs in its own subprocess (app.jobrun) so the performance limits
 (cores, threads, priority — see perf.py) apply to it, a job can be cancelled, and its memory is
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import psutil
 
-from . import engine, perf, store
+from . import engine, multi, perf, store
 
 _q: "queue.Queue[str]" = queue.Queue()
 _queued: set[str] = set()
@@ -28,6 +28,15 @@ _current: dict | None = None          # {"project", "pid" (None while starting),
 _cancelled: set[str] = set()
 _stopping = False
 BACKEND = Path(__file__).resolve().parents[1]
+
+
+def _python() -> str:
+    """The job runs under python.exe even when the desktop app runs under pythonw.exe (no stdout/stderr there,
+    which tqdm and friends need); CREATE_NO_WINDOW keeps its console hidden."""
+    exe = Path(sys.executable)
+    if exe.name.lower() == "pythonw.exe" and (exe.parent / "python.exe").is_file():
+        return str(exe.parent / "python.exe")
+    return sys.executable
 
 
 def device():
@@ -129,7 +138,19 @@ def process(p: store.Project):
     t0 = time.time()
     if p.analysis.exists():
         shutil.rmtree(p.analysis)
-    if meta["source"] == "audio":
+    parts = None
+    if meta.get("instruments") == "multi":
+        if p.performance.exists():
+            p.performance.unlink()
+        if meta["source"] == "audio":
+            model = meta.get("mt3_model") or multi.default_model()
+            _progress(p, "transcribing", 0.03, "Starting the instrument transcription model (YourMT3+)…")
+            parts = multi.prepare(p.source, p.dir / "mt3", p.performance, model,
+                                  lambda f, msg: _progress(p, "transcribing", 0.03 + 0.35 * f, msg))
+        else:
+            _progress(p, "transcribing", 0.1, "Reading the MIDI tracks as instrument parts…")
+            parts = multi.from_midi(p.source, p.performance)
+    elif meta["source"] == "audio":
         _progress(p, "transcribing", 0.05, "Loading the piano transcription model…")
         model = transkun_model()
         _progress(p, "transcribing", 0.15, "Transcribing audio to notes (Transkun)…")
@@ -156,6 +177,13 @@ def process(p: store.Project):
 
     _progress(p, "analysing", 0.42, f"Reading rhythm, bars and hands (DuET) — section 1 of {total}…")
     m.transcribe(p.performance, p.analysis, progress=cb, title=meta["title"])
+    if parts is not None:
+        if len(parts["part_of"]) != len(data["ref_onset"]):
+            raise ValueError("Instrument parts do not line up with the performance notes.")
+        multi.save_parts(p.analysis, parts)
+        p.update(parts=[dict(id=q["id"], name=q["name"], notes=q["notes"]) for q in parts["parts"]])
+    else:
+        p.update(parts=None)
     _progress(p, "engraving", 0.93, "Engraving the score…")
     engine.forget(p.id)
     res = engine.render(p)
@@ -175,10 +203,10 @@ def _run(pid: str):
     env["PYTHONPATH"] = str(BACKEND) + os.pathsep + env.get("PYTHONPATH", "")
     kw = {}
     if sys.platform == "win32":
-        kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | perf.NO_WINDOW
     else:
         kw["start_new_session"] = True
-    proc = subprocess.Popen([sys.executable, "-m", "app.jobrun", pid, json.dumps(eff)], env=env, cwd=str(BACKEND), **kw)
+    proc = subprocess.Popen([_python(), "-m", "app.jobrun", pid, json.dumps(eff)], env=env, cwd=str(BACKEND), **kw)
     with _qlock:
         _current["pid"] = proc.pid
         kill = pid in _cancelled or _stopping

@@ -6,7 +6,7 @@ import re
 
 import mido
 
-from . import engine, store, worker
+from . import engine, multi, store, worker
 from .edits import EditError, apply_ops
 
 
@@ -106,16 +106,65 @@ def set_header(p: store.Project, body) -> store.Project:
 _UNSET = object()
 
 
-def update_project(p: store.Project, title=_UNSET, header=_UNSET) -> store.Project:
-    """Rename and/or edit the title block: everything is validated first, then saved with one version bump."""
+def _project_parts(p: store.Project) -> list[dict]:
+    parts = multi.load_parts(p.analysis)
+    return parts["parts"] if parts else [dict(id="P1", name="Piano", program=0, kind="grand", clef="G")]
+
+
+def _check_parts(p: store.Project, body) -> dict:
+    """{part id: {name?, program?, clef?} | None}; clef only for single-staff parts."""
+    if not isinstance(body, dict) or not body:
+        raise ServiceError(422, "parts must be an object of part id -> changes")
+    known = {q["id"]: q for q in _project_parts(p)}
+    out = {}
+    for pid, ch in body.items():
+        if pid not in known:
+            raise ServiceError(422, f"Unknown part {pid!r}")
+        if ch is None:
+            out[pid] = None
+            continue
+        if not isinstance(ch, dict) or not ch or set(ch) - {"name", "program", "clef"}:
+            raise ServiceError(422, "A part change may set name, program and clef")
+        c = {}
+        if "name" in ch:
+            if not isinstance(ch["name"], str) or not ch["name"].strip() or len(ch["name"]) > 60:
+                raise ServiceError(422, "Part names must be 1-60 characters")
+            c["name"] = ch["name"].strip()
+        if "program" in ch:
+            if type(ch["program"]) is not int or not 0 <= ch["program"] <= 127:
+                raise ServiceError(422, "program must be a General MIDI program 0-127")
+            c["program"] = ch["program"]
+        if "clef" in ch:
+            if ch["clef"] not in ("G", "F", "C"):
+                raise ServiceError(422, "clef must be G, F or C")
+            if known[pid]["kind"] != "single":
+                raise ServiceError(422, "Only single-staff parts can change clef")
+            c["clef"] = ch["clef"]
+        out[pid] = c
+    return out
+
+
+def update_project(p: store.Project, title=_UNSET, header=_UNSET, parts=_UNSET) -> store.Project:
+    """Rename, edit the title block and/or rename / re-instrument parts: everything is validated first, then saved
+    with one version bump."""
     changes = {}
     if title is not _UNSET:
         changes["title"] = _check_title(title)
     if header is not _UNSET:
         patch = _check_header(header)
-    if not changes and header is _UNSET:
-        raise ServiceError(422, "title or header required")
+    if parts is not _UNSET:
+        part_patch = _check_parts(p, parts)
+    if not changes and header is _UNSET and parts is _UNSET:
+        raise ServiceError(422, "title, header or parts required")
     with _txn(p):
+        if parts is not _UNSET:
+            ov = dict(p.meta().get("part_overrides") or {})
+            for pid, c in part_patch.items():
+                if c is None:
+                    ov.pop(pid, None)
+                else:
+                    ov[pid] = {**(ov.get(pid) or {}), **c}
+            changes["part_overrides"] = ov
         if header is not _UNSET:
             changes["header"] = {**store.DEFAULT_HEADER, **(p.meta().get("header") or {}), **patch}
         p.update(**changes)
@@ -124,7 +173,40 @@ def update_project(p: store.Project, title=_UNSET, header=_UNSET) -> store.Proje
     return p
 
 
-def retry(p: store.Project):
+def check_mode(instruments: str | None, model: str | None, is_midi: bool) -> str | None:
+    """Validate an instruments mode / YourMT3+ model choice; returns the model key to store (None for piano)."""
+    instruments = instruments or "piano"
+    if instruments not in store.INSTRUMENTS:
+        raise ValueError(f"instruments must be one of {', '.join(store.INSTRUMENTS)}")
+    if instruments == "piano":
+        return None
+    if model and model not in multi.installed_models():
+        raise ValueError(f"model must be one of {', '.join(multi.installed_models())}")
+    if not is_midi and not multi.available():
+        raise ValueError("Multi-instrument transcription is not installed on this server (YourMT3+).")
+    return None if is_midi else (model or multi.default_model())
+
+
+def retry(p: store.Project, instruments: str | None = None, model: str | None = None):
+    from . import models
+    try:
+        models.require_ready()
+    except models.ModelsMissing as e:
+        raise ServiceError(409, str(e))
+    if instruments is not None or model is not None:
+        meta = p.meta()
+        instruments = instruments or meta.get("instruments", "piano")
+        try:
+            model = check_mode(instruments, model or meta.get("mt3_model"), meta["source"] == "midi")
+        except ValueError as e:
+            raise ServiceError(422, str(e))
+        changed = (instruments, model) != (meta.get("instruments", "piano"), meta.get("mt3_model"))
+        if changed:                   # different notes -> the old edit history no longer applies
+            worker.cancel(p.id)
+            with _txn(p):
+                p.history_path.unlink(missing_ok=True)
+                p.update(instruments=instruments, mt3_model=model, parts=None)
+                engine.forget(p.id)
     worker.cancel(p.id)
     p.update(status="queued", error=None, progress=dict(stage="queued", fraction=0, message="Waiting in queue…"))
     worker.submit(p.id)
@@ -208,11 +290,23 @@ def score_midi_bytes(d: dict) -> bytes:
     tpq = 480
     tempo = d["meta"].get("tempo") or 120
     mf = mido.MidiFile(ticks_per_beat=tpq)
-    for staff in (1, 2):
+    parts = d.get("parts") or []
+    if len(parts) <= 1 and (not parts or parts[0].get("kind") == "grand" and parts[0].get("program", 0) == 0):
+        tracks = [(1, "Right hand", 0, None), (2, "Left hand", 0, None)]       # classic piano score
+    else:                                   # one track per staff, with the part's GM program on its own channel
+        tracks = []
+        for k, part in enumerate(parts):
+            ch = min(15, k if k < 9 else k + 1)
+            for j, st in enumerate(part["staves"]):
+                name = part["name"] + ((" (upper)" if j == 0 else " (lower)") if len(part["staves"]) > 1 else "")
+                tracks.append((st, name, ch, int(part.get("program", 0)) % 128))
+    for idx, (staff, name, ch, program) in enumerate(tracks):
         tr = mido.MidiTrack()
-        tr.append(mido.MetaMessage("track_name", name="Right hand" if staff == 1 else "Left hand", time=0))
-        if staff == 1:
+        tr.append(mido.MetaMessage("track_name", name=name, time=0))
+        if idx == 0:
             tr.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(tempo), time=0))
+        if program is not None:
+            tr.append(mido.Message("program_change", program=program, channel=ch, time=0))
         ev = []
         for n in d["notes"]:
             if n["deleted"] or n["staff"] != staff:
@@ -221,8 +315,8 @@ def score_midi_bytes(d: dict) -> bytes:
             dur = 0.12 if n["grace"] else n["dur"]
             a, b = max(0, round(on * tpq)), max(1, round((on + dur) * tpq))
             vel = max(1, min(127, n["velocity"] or 64))
-            ev.append((a, 1, mido.Message("note_on", note=n["pitch"], velocity=vel, channel=0)))
-            ev.append((b, 0, mido.Message("note_off", note=n["pitch"], velocity=0, channel=0)))
+            ev.append((a, 1, mido.Message("note_on", note=n["pitch"], velocity=vel, channel=ch)))
+            ev.append((b, 0, mido.Message("note_off", note=n["pitch"], velocity=0, channel=ch)))
         ev.sort(key=lambda e: (e[0], e[1]))
         t = 0
         for at, _, msg in ev:

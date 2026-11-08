@@ -1,6 +1,7 @@
 import { Midi } from '@tonejs/midi';
+import { version } from '../../package.json';
 import type {
-  AssistantRequest, HistoryEntry, LlmConfig, Note, Op, Project, Review, ScoreDoc, ScoreHeader, Settings,
+  AssistantRequest, HistoryEntry, Instrument, LlmConfig, Model, ModelsStatus, Note, Op, PartOverrides, PerfSettings, PerfStatus, Project, Review, ScoreDoc, ScoreHeader, Settings,
 } from './types';
 import { DEFAULT_HEADER } from './verovio';
 
@@ -37,6 +38,147 @@ const reviews: Review[] = [
 ];
 
 const copy = <T,>(value: T): T => structuredClone(value);
+// Deterministic desktop/offline fixtures also support manual UI previews.
+const modelScenario = new URLSearchParams(location.search).get('mockModels');
+const firstRun = modelScenario === 'missing' || modelScenario === 'offline';
+const GiB = 1024 ** 3;
+const modelDefinitions = [
+  ['duet', 'DuET', 'Rhythm, bars and hands', true, false, true, true, 0.7],
+  ['transkun', 'Transkun', 'Piano transcription', true, false, true, false, 0.4],
+  ['yptf-multi-ps', 'YourMT3+ · YPTF Multi PS', 'Multiple instruments', false, true, false, true, 1.2],
+  ['moe-nops', 'YourMT3+ · MoE NoPS', 'Multiple instruments', false, false, true, true, 1.5],
+  ['moe-ps', 'YourMT3+ · MoE PS', 'Multiple instruments', false, false, false, true, 1.5],
+  ['yptf-single', 'YourMT3+ · YPTF Single', 'Single instrument', false, false, false, true, 0.9],
+  ['ymt3+', 'YourMT3+', 'Multiple instruments', false, false, false, true, 1],
+] as const;
+const models: Model[] = modelDefinitions.map(([key, name, purpose, required, recommended, installed, managed, size]) => ({
+  key, name, purpose, required, recommended,
+  installed: modelScenario === 'docker' || (firstRun && managed ? false : installed),
+  managed: modelScenario === 'docker' ? false : managed,
+  bytes: installed ? Math.round(size * GiB) : null, download_bytes: Math.round(size * GiB),
+  source: key === 'duet' ? 'huggingface.co/Wayne42/DuET' : 'huggingface.co',
+  state: modelScenario === 'states' && key === 'moe-ps' ? 'error' : 'idle', progress: null,
+  error: modelScenario === 'states' && key === 'moe-ps' ? 'Download failed. Check your connection and retry.' : null,
+}));
+const downloads = new Map<string, number>();
+let failDownload = modelScenario === 'offline';
+let storageStarted: number | null = null;
+function mockModels(): ModelsStatus {
+  const hadDownloads = downloads.size > 0;
+  for (const [key, start] of downloads) {
+    const model = models.find(item => item.key === key)!;
+    const progress = Math.min(1, (Date.now() - start) / 3500);
+    if (failDownload && progress > 0.25) {
+      model.state = 'error'; model.error = 'Download failed. Check your connection and retry.';
+      model.progress = null; downloads.delete(key);
+    } else if (progress >= 1) {
+      model.state = 'idle'; model.installed = true; model.bytes = model.download_bytes;
+      model.progress = null; downloads.delete(key);
+    } else { model.state = progress < 0.1 ? 'queued' : 'downloading'; model.progress = progress; }
+  }
+  if (hadDownloads && !downloads.size) failDownload = false;
+  return copy({ ready: models.filter(model => model.required).every(model => model.installed), downloading: downloads.size > 0, models });
+}
+const originalFiles = new Map<string, File>();
+const instruments: Instrument[] = [
+  { name: 'Piano', program: 0, clef: 'G', kind: 'grand' },
+  { name: 'Electric piano', program: 4, clef: 'G', kind: 'grand' },
+  { name: 'Violin', program: 40, clef: 'G', kind: 'single' },
+  { name: 'Viola', program: 41, clef: 'C', kind: 'single' },
+  { name: 'Cello', program: 42, clef: 'F', kind: 'single' },
+  { name: 'Flute', program: 73, clef: 'G', kind: 'single' },
+];
+const performanceSettings: PerfSettings = { preset: 'balanced', cores: [0, 1, 2, 3], priority: 'low' };
+const performancePresets = {
+  eco: { cores: [0, 1], threads: 2, priority: 'background' as const, nice: 19 },
+  balanced: { cores: [0, 1, 2, 3], threads: 4, priority: 'low' as const, nice: 10 },
+  full: { cores: [0, 1, 2, 3, 4, 5, 6, 7], threads: 8, priority: 'normal' as const, nice: 0 },
+};
+function mockPerformance(): PerfStatus {
+  return copy({
+    settings: performanceSettings,
+    effective: { cores: performanceSettings.cores, threads: performanceSettings.cores.length, priority: performanceSettings.priority,
+      nice: performanceSettings.priority === 'normal' ? 0 : performanceSettings.priority === 'low' ? 10 : 19 },
+    presets: performancePresets,
+    system: { platform: 'Mock', docker: false, logical_cpus: 8, allowed_cores: performancePresets.full.cores, cpu_quota: null,
+      memory_limit: null, memory_total: 16 * 1024 ** 3, memory_available: 10 * 1024 ** 3, can_raise_priority: true },
+    usage: { per_core: Array.from({ length: 8 }, (_, i) => 10 + Math.round((Math.sin(Date.now() / 1800 + i) + 1) * 25)), server_cpu: 12, server_rss: 180 * 1024 ** 2, job: null },
+    gpu: { available: true, name: 'NVIDIA GeForce (mock)', memory_total: 8 * 1024 ** 3, memory_used: 2 * 1024 ** 3,
+      utilization: 24, driver: 'Mock', used_for: ['Piano transcription (Transkun)', 'Score model (DuET)', 'Multi-instrument (YourMT3+)'] },
+  });
+}
+
+export async function mockOriginal(doc: ScoreDoc) {
+  if (originalFiles.has(doc.id)) return originalFiles.get(doc.id)!;
+  const { encodeWav } = await import('./exportAudio');
+  const length = Math.ceil((doc.timemap.at(-1)?.[1] ?? 1) * 44100);
+  const buffer = new AudioBuffer({ length, sampleRate: 44100 });
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < Math.min(channel.length, 44100); i++) channel[i] = Math.sin(i * 2 * Math.PI * 440 / 44100) * 0.1;
+  return encodeWav(buffer, () => {});
+}
+
+export function mockOriginalFilename(doc: ScoreDoc) {
+  const file = originalFiles.get(doc.id);
+  return `${doc.title}.${file ? file.name.split('.').pop() : 'wav'}`;
+}
+
+export async function mockXml(id: string) {
+  const doc = await getDoc(id);
+  const xml = new DOMParser().parseFromString((await fixture()).xml, 'application/xml');
+  for (const part of doc.parts ?? []) {
+    let definition = xml.querySelector(`score-part[id="${part.id}"]`);
+    if (!definition && part.id !== 'P1') {
+      definition = xml.createElement('score-part'); definition.setAttribute('id', part.id);
+      const name = xml.createElement('part-name'); definition.append(name);
+      xml.querySelector('part-list')!.append(definition);
+      const music = xml.createElement('part'); music.setAttribute('id', part.id);
+      for (const measure of doc.measures) {
+        const bar = xml.createElement('measure'); bar.setAttribute('number', String(measure.number));
+        // Pitch and timing come from the same notes as mockMidi; each written voice keeps its own cursor.
+        bar.innerHTML = `<attributes><divisions>24</divisions><key><fifths>${measure.key}</fifths></key><time><beats>${measure.time[0]}</beats><beat-type>${measure.time[1]}</beat-type></time><clef><sign>${part.clef}</sign><line>${part.clef === 'F' ? 4 : part.clef === 'C' ? 3 : 2}</line></clef></attributes>`;
+        const notes = doc.notes.filter(n => n.part === part.id && n.measure === measure.index && !n.deleted).sort((a, b) => a.on - b.on);
+        let cursor = measure.start;
+        for (const n of notes) {
+          const delta = Math.round((n.on - cursor) * 24);
+          if (delta) { const move = xml.createElement(delta > 0 ? 'forward' : 'backup'); move.innerHTML = `<duration>${Math.abs(delta)}</duration>`; bar.append(move); }
+          const pitch = ['C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B'][n.pitch % 12];
+          const alter = [1, 3, 6, 8, 10].includes(n.pitch % 12) ? 1 : 0;
+          const note = xml.createElement('note'); note.setAttribute('id', `n${n.id}`);
+          note.innerHTML = `<pitch><step>${pitch}</step><alter>${alter}</alter><octave>${Math.floor(n.pitch / 12) - 1}</octave></pitch><duration>${Math.round(n.dur * 24)}</duration><voice>${n.voice}</voice>`;
+          bar.append(note); cursor = n.on + n.dur;
+        }
+        if (!notes.length) { const rest = xml.createElement('note'); rest.innerHTML = `<rest measure="yes"/><duration>${measure.length * 24}</duration>`; bar.append(rest); }
+        music.append(bar);
+      }
+      xml.documentElement.append(music);
+    }
+    // The fixture's piano part may use a generated id rather than P1.
+    definition ??= xml.querySelector('score-part');
+    if (definition) {
+      definition.querySelector('part-name')!.textContent = part.name;
+      let instrument = definition.querySelector('score-instrument');
+      if (!instrument) {
+        instrument = xml.createElement('score-instrument'); instrument.setAttribute('id', `${part.id}-I1`);
+        instrument.append(xml.createElement('instrument-name')); definition.append(instrument);
+      }
+      instrument.querySelector('instrument-name')!.textContent = part.name;
+      let midi = definition.querySelector('midi-instrument');
+      if (!midi) {
+        midi = xml.createElement('midi-instrument'); midi.setAttribute('id', instrument.getAttribute('id')!);
+        const channel = xml.createElement('midi-channel'); channel.textContent = String((doc.parts?.indexOf(part) ?? 0) + 1); midi.append(channel);
+        midi.append(xml.createElement('midi-program')); definition.append(midi);
+      }
+      midi.querySelector('midi-program')!.textContent = String(part.program + 1);
+    }
+    const music = xml.querySelector(`part[id="${part.id}"]`) ?? (part.id === 'P1' ? xml.querySelector('part') : null);
+    if (part.kind === 'single') music?.querySelectorAll('clef').forEach(clef => {
+      clef.querySelector('sign')!.textContent = part.clef;
+      clef.querySelector('line')!.textContent = String(part.clef === 'F' ? 4 : part.clef === 'C' ? 3 : 2);
+    });
+  }
+  return new XMLSerializer().serializeToString(xml);
+}
 const number = (element: Element, tag: string, fallback = 0) => Number(element.querySelector(tag)?.textContent ?? fallback);
 const pitchSteps: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 let cached: Promise<{ xml: string; doc: ScoreDoc }> | undefined;
@@ -100,7 +242,7 @@ async function loadFixture() {
           grace: !!element.querySelector('grace'), deleted: false, added: false,
           perf_on: (start + onset) * 60 / 130,
           perf_off: (start + onset + duration) * 60 / 130,
-          velocity: 80, edited: [],
+          velocity: 80, edited: [], part: 'P1',
         });
       }
       start += length;
@@ -109,7 +251,7 @@ async function loadFixture() {
   });
 
   const doc: ScoreDoc = {
-    id: 'demo', title: 'Winter Wind', version: 1, settings: copy(defaults), header: { ...DEFAULT_HEADER },
+    id: 'demo', title: 'Winter Wind', parts: [{ id: 'P1', name: 'Piano', program: 0, kind: 'grand', clef: 'G', staves: [1, 2] }], version: 1, settings: copy(defaults), header: { ...DEFAULT_HEADER },
     meta: { tempo: 130, bars: measures.length, pickup: 0, notes: notes.length, has_audio: false },
     notes, measures, timemap: Array.from({ length: Math.ceil(end) + 1 }, (_, index) => [index, index * 60 / 130]),
     review: copy(reviews), history: { can_undo: false, can_redo: false, edits: 0 },
@@ -118,9 +260,11 @@ async function loadFixture() {
 }
 
 const projects: Project[] = [
+  { id: 'demo-multi', title: 'Violin and Piano', created: new Date().toISOString(), source: 'audio', status: 'ready', bars: 102, has_audio: true, version: 1, instruments: 'multi' },
   { id: 'demo', title: 'Winter Wind', created: new Date().toISOString(), source: 'audio', status: 'ready', bars: 102, has_audio: false, version: 1 },
   { id: 'demo-midi', title: 'Winter Wind (MIDI)', created: new Date().toISOString(), source: 'midi', status: 'ready', bars: 102, has_audio: false, version: 1 },
 ];
+projects.push(projects.shift()!);
 const docs = new Map<string, ScoreDoc>();
 const undos = new Map<string, ScoreDoc[]>();
 const redos = new Map<string, ScoreDoc[]>();
@@ -132,6 +276,14 @@ async function getDoc(id: string) {
     const doc = copy((await fixture()).doc);
     doc.id = id;
     doc.title = projects.find(project => project.id === id)?.title ?? 'Untitled';
+    doc.version = projects.find(project => project.id === id)?.version ?? 1;
+    const project = projects.find(p => p.id === id);
+    doc.meta.has_audio = !!project?.has_audio;
+    if (project?.instruments === 'multi') {
+      doc.parts!.push({ id: 'P2', name: 'Violin', program: 40, kind: 'single', clef: 'G', staves: [3] });
+      const violin = doc.notes.filter(n => n.staff === 1 && n.measure < 8).map(n => ({ ...n, id: n.id + 50000, staff: 3, part: 'P2', edited: [] }));
+      doc.notes.push(...violin); doc.meta.notes = doc.notes.length;
+    }
     docs.set(id, doc);
   }
   return docs.get(id)!;
@@ -211,10 +363,11 @@ function mockUpload(body: unknown) {
   const file = (body as FormData).get('file') as File;
   const project: Project = {
     id: crypto.randomUUID(), title: file.name.replace(/\.[^.]+$/, ''), created: new Date().toISOString(),
-    source: /\.midi?$/i.test(file.name) ? 'midi' : 'audio', status: 'queued', has_audio: false,
+    source: /\.midi?$/i.test(file.name) ? 'midi' : 'audio', status: 'queued', has_audio: !/\.midi?$/i.test(file.name), instruments: ((body as FormData).get('instruments') as 'piano' | 'multi') ?? 'piano',
     progress: { stage: 'queued', fraction: 0, message: 'Preparing fixture…' },
   };
   projects.unshift(project);
+  if (project.has_audio) originalFiles.set(project.id, file);
   const stages = ['transcribing', 'analysing', 'engraving'] as const;
   stages.forEach((stage, index) => window.setTimeout(() => {
     project.status = stage;
@@ -228,7 +381,59 @@ function mockUpload(body: unknown) {
 }
 
 export async function mockRequest(path: string, method: string, body: unknown): Promise<unknown> {
-  if (path === '/health') return { ok: true, version: 'mock', cuda: false, llm: copy(config) };
+  if (path === '/health') return { ok: true, models_ready: models.filter(model => model.required).every(model => model.installed), version: `${version} (mock)`, cuda: true, llm: copy(config), multi: { available: true, default: 'yptf-multi-ps', models: [
+    { key: 'yptf-multi-ps', label: 'YPTF+Multi (PS)' }, { key: 'moe-nops', label: 'YPTF.MoE+Multi (noPS)' }, { key: 'moe-ps', label: 'YPTF.MoE+Multi (PS)' },
+    { key: 'yptf-single', label: 'YPTF+Single (noPS)' }, { key: 'ymt3+', label: 'YMT3+' }] } };
+  if (path === '/models') return mockModels();
+  if (path === '/models/download' && method === 'POST') {
+    for (const key of (body as { keys: string[] }).keys) {
+      const model = models.find(item => item.key === key);
+      if (!model) throw new Error('Model not found');
+      if (model.installed || !model.managed || downloads.has(key)) continue;
+      model.state = 'queued'; model.progress = 0; model.error = null;
+      downloads.set(key, Date.now());
+    }
+    return mockModels();
+  }
+  if (path.startsWith('/models/') && path.endsWith('/remove') && method === 'POST') {
+    const model = models.find(item => item.key === decodeURIComponent(path.split('/')[2]));
+    if (!model || !model.managed || model.required || downloads.has(model.key)) throw new Error('Model cannot be removed');
+    model.installed = false; model.bytes = null; model.state = 'idle'; model.progress = null; model.error = null;
+    return mockModels();
+  }
+  if (path === '/storage') {
+    storageStarted ??= Date.now();
+    const items = projects.map(project => ({ ...copy(project), bytes: (project.source === 'audio' ? 24 : 2) * 1024 ** 2 }));
+    const projectBytes = items.reduce((sum, item) => sum + item.bytes, 0);
+    const modelBytes = models.reduce((sum, model) => sum + (model.installed ? model.bytes ?? model.download_bytes ?? 0 : 0), 0);
+    const appBytes = modelScenario === 'calculating' && Date.now() - storageStarted < 2500 ? null : Math.round(0.8 * GiB);
+    return { data_dir: modelScenario === 'docker' ? '/data/score-studio' : 'C:\\Users\\Tommy\\AppData\\Local\\ScoreStudio\\data',
+      disk_free: 128 * GiB - projectBytes - modelBytes, disk_total: 256 * GiB,
+      projects: { bytes: projectBytes, count: items.length, items }, models: { bytes: modelBytes }, app: { bytes: appBytes } };
+  }
+  if (path === '/projects/delete' && method === 'POST') {
+    const target = body as { all?: boolean; ids?: string[] };
+    const ids = projects.filter(project => target.all || target.ids?.includes(project.id)).map(project => project.id);
+    for (const id of ids) {
+      projects.splice(projects.findIndex(project => project.id === id), 1);
+      originalFiles.delete(id);
+      for (const collection of [docs, undos, redos, histories]) collection.delete(id);
+    }
+    return { deleted: ids.length };
+  }
+  if (path === '/instruments') return copy(instruments);
+  if (path === '/performance') {
+    if (method === 'PUT') {
+      const patch = body as Partial<PerfSettings>;
+      Object.assign(performanceSettings, patch);
+      if (patch.preset && patch.preset !== 'custom') {
+        const preset = performancePresets[patch.preset];
+        performanceSettings.cores = [...preset.cores];
+        performanceSettings.priority = patch.priority ?? preset.priority;
+      }
+    }
+    return mockPerformance();
+  }
   if (path === '/config/llm') {
     if (method === 'PUT') {
       const values = body as Partial<LlmConfig> & { api_key?: string };
@@ -240,21 +445,36 @@ export async function mockRequest(path: string, method: string, body: unknown): 
     }
     return copy(config);
   }
-  if (path === '/projects') return method === 'POST' ? mockUpload(body) : copy(projects);
+  if (path === '/projects') {
+    if (method === 'POST' && models.some(model => model.required && !model.installed)) throw new Error('Required models are missing. Download models in Settings › Storage.');
+    return method === 'POST' ? mockUpload(body) : copy(projects);
+  }
   const [, , id, route] = path.split('/');
   const project = projects.find(item => item.id === id);
   if (!project) throw new Error('Project not found');
   if (!route) {
     if (method === 'DELETE') {
+      originalFiles.delete(id);
       projects.splice(projects.indexOf(project), 1);
       for (const collection of [docs, undos, redos, histories]) collection.delete(id);
       return;
     }
     if (method === 'PATCH') {
-      const patch = body as { title?: string; header?: Partial<ScoreHeader> };
+      const patch = body as { title?: string; header?: Partial<ScoreHeader>; parts?: PartOverrides };
       if (patch.title) project.title = patch.title;
       const current = await getDoc(id);
       current.title = project.title;
+      if (patch.parts) {
+        const originals = (await fixture()).doc.parts!;
+        current.parts = current.parts?.map(part => {
+          if (!(part.id in patch.parts!)) return part;
+          const update = patch.parts![part.id];
+          const original = originals.find(p => p.id === part.id) ?? { ...part, name: 'Violin', program: 40, clef: 'G' };
+          return update === null ? copy(original) : { ...part, ...update, ...(part.kind === 'grand' ? { clef: part.clef } : {}) };
+        });
+        current.version++; project.version = current.version;
+        project.parts = current.parts?.map(part => ({ id: part.id, name: part.name, notes: current.notes.filter(n => n.part === part.id).length }));
+      }
       if (patch.header) {
         current.header = { ...DEFAULT_HEADER, ...current.header, ...patch.header };
         current.version += 1;
@@ -265,6 +485,16 @@ export async function mockRequest(path: string, method: string, body: unknown): 
   }
 
   let doc = await getDoc(id);
+  if (route === 'retry') {
+    project.instruments = (body as { instruments: 'piano' | 'multi' }).instruments;
+    project.parts = null;
+    project.version = (project.version ?? 1) + 1;
+    project.status = 'transcribing';
+    project.progress = { stage: 'transcribing', fraction: 0.2, message: 'Preparing fixture…' };
+    for (const collection of [docs, undos, redos, histories]) collection.delete(id);
+    setTimeout(() => { project.status = 'ready'; project.progress = undefined; }, 900);
+    return copy(project);
+  }
   if (route === 'doc') return copy(doc);
   if (route === 'history') return copy(histories.get(id) ?? []);
   if (route === 'assistant') {
@@ -314,9 +544,10 @@ export async function mockRequest(path: string, method: string, body: unknown): 
 export function mockMidi(doc: ScoreDoc) {
   const midi = new Midi();
   midi.header.setTempo(doc.meta.tempo);
-  for (const staff of [1, 2]) {
+  for (const part of doc.parts ?? []) {
     const track = midi.addTrack();
-    for (const note of doc.notes.filter(note => !note.deleted && note.staff === staff)) {
+    track.instrument.number = part.program; track.name = part.name;
+    for (const note of doc.notes.filter(note => !note.deleted && part.staves.includes(note.staff))) {
       track.addNote({
         midi: note.pitch, time: note.on * 60 / doc.meta.tempo,
         duration: Math.max(0.05, note.dur * 60 / doc.meta.tempo), velocity: note.velocity / 127,

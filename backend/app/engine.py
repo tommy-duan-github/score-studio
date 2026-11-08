@@ -23,6 +23,28 @@ class Loaded:
     p1: studio.Phase1
     key: str = ""
     result: studio.Result | None = None
+    base_parts: list | None = None        # parts.json as transcribed, before user overrides
+
+
+PART_KEYS = ("name", "program", "clef")
+
+
+def apply_part_overrides(L: Loaded, overrides: dict):
+    """User renames / instrument changes (meta["part_overrides"]: {part id: {name, program, clef}}) on top of the
+    transcribed parts. Clef applies to single-staff parts only; kind and staves never change."""
+    from .engrave.parts import score_parts
+    if L.inp.parts is not None:
+        if L.base_parts is None:
+            L.base_parts = [dict(p) for p in L.inp.parts]
+        L.inp.parts = [dict(p, **{k: v for k, v in (overrides.get(p["id"]) or {}).items()
+                                  if k in PART_KEYS and (k != "clef" or p["kind"] == "single")})
+                       for p in L.base_parts]
+    parts = score_parts(L.inp)
+    if L.inp.parts is None:               # classic piano project: one grand part P1
+        o = overrides.get("P1") or {}
+        parts[0].update({k: o[k] for k in ("name", "program") if k in o})
+    L.p1.ctx.parts = parts
+    L.p1.ctx.part_overrides = overrides
 
 
 _cache: dict[str, Loaded] = {}
@@ -51,7 +73,13 @@ def load_inputs(project: Project) -> Inputs:
     score = types.SimpleNamespace(**{k: z[k] for k in ("notes", "bar_starts", "bar_lengths", "meters", "voices", "keys")})
     data = read_performance_midi(project.performance)
     frames = pd.read_csv(a / "frames.csv")
-    return Inputs.from_prediction(data, score, frames)
+    inp = Inputs.from_prediction(data, score, frames)
+    if (a / "parts.json").is_file():
+        parts = json.loads((a / "parts.json").read_text(encoding="utf-8"))
+        inp.parts, inp.part_of = parts["parts"], parts["part_of"]
+        from .engrave.parts import validate
+        validate(inp)
+    return inp
 
 
 def _loaded(project: Project) -> Loaded:
@@ -76,10 +104,12 @@ def render(project: Project, edits: dict | None = None, settings: dict | None = 
         settings = settings if settings is not None else meta["settings"]
         edits = edits if edits is not None else project.edit_state()
         header = dict(DEFAULT_HEADER, **(meta.get("header") or {}))
-        key = hashlib.sha1(json.dumps([settings, edits, meta["title"], header], sort_keys=True).encode()).hexdigest()
+        overrides = meta.get("part_overrides") or {}
+        key = hashlib.sha1(json.dumps([settings, edits, meta["title"], header, overrides], sort_keys=True).encode()).hexdigest()
         L = _loaded(project)
         if L.key == key and L.result is not None:
             return L.result
+        apply_part_overrides(L, overrides)
         cfg = make_config(settings)
         L.p1.ctx.title = meta["title"]
         L.p1.ctx.header = header

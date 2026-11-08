@@ -18,8 +18,9 @@ MIDI  ────────────────────────�
 - **Transcribe** mp3/wav/flac/m4a/ogg or MIDI. Runs on CPU, or an NVIDIA GPU when available.
 - **Edit** by clicking notes: hand, voice (1–4), duration, spelling, transpose, delete. Includes undo/redo and a review
   list of uncertain spots.
-- **Play** the original audio or the score, with a following cursor. You can also use full-screen reading mode.
-- **Export** MusicXML, MIDI or PDF (print).
+- **Play** the original audio or the score, with a following cursor. Full-screen reading mode turns pages by
+  vertical scroll, sideways scroll or tap-to-turn (one page at a time).
+- **Export** the score (MusicXML, MIDI, Print / PDF) or audio (rendered .wav, original audio).
 - **Assistant** (optional): DeepSeek proposes structured edits for the bars you select. You preview them before
   applying.
 - **MCP** endpoint so AI agents can transcribe, read, edit and export scores.
@@ -35,6 +36,36 @@ docker compose up -d --build
 Open <http://localhost:19287>. The first build downloads PyTorch (CPU), DuET and its weights, and Transkun, so it takes
 a while. After that the container transcribes offline. See [docs/DOCKER.md](docs/DOCKER.md) for options: password,
 CPU limits, MCP and environment variables.
+
+## Windows desktop app (portable)
+
+`release/score-studio-<version>-windows/` is a self-contained folder: double-click **ScoreStudio.exe**. It opens a
+native window (Edge WebView2) with the same app, uses the NVIDIA GPU when present, and keeps projects in its own
+`data` folder. Nothing is installed. Model files are not included: on first start the app offers a one-click download
+from Hugging Face (DuET, plus YourMT3+ for multiple instruments) into its `models` folder; after that it works offline.
+**Settings › Storage** (desktop and Docker) lists the models and the space used by projects, models and the app, and
+deletes projects in bulk.
+
+Build it from a working development setup (below, plus the optional multi-instrument setup):
+
+```bash
+npm --prefix web run build
+.venv/Scripts/python desktop/build.py            # --with-models for an offline build, --no-mt3, --zip
+```
+
+`desktop/build.py` copies the standalone Python behind `.venv`, its packages (+ pywebview), the DuET weights,
+YourMT3+ and ffmpeg, and compiles the small `ScoreStudio.exe` launcher (`desktop/launcher.cs`) with the C# compiler
+built into Windows. In development, `.venv/Scripts/python desktop/main.py` runs the desktop window directly
+(`pip install pywebview` first).
+
+## Releases
+
+`python tools/release.py` builds both release folders for the version in `backend/app/__init__.py`:
+`release/score-studio-<version>/` (Docker image tarball with YourMT3+, `docker-compose.yml`, NAS README, `CHANGES.md`,
+`HERMES.md`, `SHA256SUMS`) and the Windows portable folder above. `--docker` or `--windows` builds one;
+`--docker --docs-only` rewrites the docs without rebuilding the image. Everything comes from tracked files:
+`packaging/docker/` (README template, Hermes notes), `docker-compose.yml` and the version's section of
+[CHANGELOG.md](CHANGELOG.md). `release/` itself is build output and can be deleted.
 
 ## Run locally
 
@@ -70,20 +101,30 @@ Open <http://127.0.0.1:8000>. On Windows, after setup, `start.bat` and `stop.bat
 (`Wayne42/DuET` on Hugging Face) download automatically the first time you transcribe, and are cached in
 `~/.cache/huggingface`.
 
+**Multi-instrument (experimental):** an optional YourMT3+ setup adds a *Multi-instrument* mode that writes one part
+per instrument (e.g. violin + piano). See [docs/MULTI_INSTRUMENT.md](docs/MULTI_INSTRUMENT.md).
+
 **Development:** run the backend with `--reload`, then run `npm --prefix web run dev` (http://localhost:5173, which proxies
 `/api` to port 8000). `npm --prefix web run dev:mock` runs the UI with a built-in demo score and no backend.
 `npm --prefix web run test:smoke` runs the Playwright tests (they need Chrome installed).
 
 ## Usage
 
-1. Drop an audio or MIDI file on **New transcription**. MIDI takes about 1–3 minutes. Audio takes several minutes per
+1. Drop an audio or MIDI file on **New transcription** and choose *Piano* or *Multiple instruments*. MIDI takes about 1–3 minutes. Audio takes several minutes per
    minute of music on CPU, and is much faster on GPU.
 2. Click a note to edit it in the **Note** panel. Shift-click or drag to select several notes. Click a bar number to
    select a measure. Keyboard shortcuts: `R`/`L` sets the hand, `1`–`4` sets the voice, arrows transpose, `Del` deletes,
    `Space` plays.
 3. Work through the **Review** tab: it lists the engraver's uncertain spots (key, voices, meter).
-4. **Settings** controls voices per staff (1–4), hand span, and automatic keys and spelling.
-5. **Export** gives MusicXML or MIDI. Use print for PDF.
+4. The **Engraving** tab controls voices per staff (1–4), hand span, and automatic keys and spelling.
+5. **Export** is grouped into Score (MusicXML, MIDI, Print / PDF) and Audio (rendered .wav, original audio).
+6. **Read** (score toolbar) opens full-screen reading mode. Its liquid-glass bar has play/pause, original audio vs
+   synth, speed, transpose and a page-turning menu: *Vertical scroll*, *Sideways scroll* or *Tap to turn pages*
+   (tap the right side for the next page, the left side to go back; arrow keys, Page Up/Down and swipes work too).
+   The choice is remembered.
+
+**Settings** (bottom left of the library) holds the app-wide options: General (theme, language English / 简体中文),
+Performance (CPU/GPU), Storage (disk use, model downloads, bulk project delete) and About.
 
 **Assistant:** open **Assistant → setup** and paste a [DeepSeek](https://platform.deepseek.com/) API key, or set
 `DEEPSEEK_API_KEY`. The key is stored only in your local `data/config.json`, which is git-ignored.
@@ -101,6 +142,7 @@ build time and keep their own licenses:
 | [DuET](https://github.com/wei-zeng98/DuET) code / engraver fork in `backend/app/engrave/` | MIDI → score | MIT |
 | [DuET weights](https://huggingface.co/Wayne42/DuET) | MIDI → score model | **CC BY-NC 4.0 (non-commercial only)** |
 | [Transkun v2](https://github.com/Yujia-Yan/Transkun) | audio → MIDI | MIT |
+| [YourMT3+](https://github.com/mimbres/YourMT3) code + weights (optional, multi-instrument) | audio → multi-instrument notes | Apache-2.0 |
 | [PyTorch](https://pytorch.org/) | model runtime | BSD-3-Clause |
 | [FastAPI](https://fastapi.tiangolo.com/) / [Uvicorn](https://www.uvicorn.org/) | web server | MIT / BSD-3-Clause |
 | [Verovio](https://www.verovio.org/) (Python + WASM) | engraving / rendering | LGPL-3.0-or-later |

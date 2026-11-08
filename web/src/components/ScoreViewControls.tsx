@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { GalleryHorizontal, LayoutGrid, Minus, Plus, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { InfoTip, Label, Popover, Segmented } from './Controls';
 import {
@@ -17,30 +18,25 @@ export function ScoreViewControls({ view, onChange }: Props) {
 
   return <div className="score-view-controls">
     <Segmented<ScoreLayout>
-      label="Page layout"
+      label={t("Page layout")}
       value={view.layout}
       className="layout-control"
       options={[
-        { value: 'pages', label: <><LayoutGrid size={13} />Pages</> },
-        { value: 'strip', label: <><GalleryHorizontal size={13} />Side-scroll</> },
+        { value: 'pages', label: <><LayoutGrid size={13} />{t("Pages")}</> },
+        { value: 'strip', label: <><GalleryHorizontal size={13} />{t("Side-scroll")}</> },
       ]}
       onChange={layout => onChange({ layout })}
     />
-    <InfoTip label="page layout">
-      Pages: fixed-size pages, as many side by side as fit, scrolling down. Side-scroll: one row of pages;
-      the mouse wheel scrolls sideways. Page size only changes with zoom (also Ctrl + mouse wheel).
-    </InfoTip>
+    <InfoTip label={t("page layout")}>{t("Pages scrolls down with pages side by side when space allows; Side-scroll puts them in one horizontal row. Ctrl/⌘ + mouse wheel changes zoom.")}</InfoTip>
 
-    <Popover label="Density" icon={<SlidersHorizontal size={14} />} className="density-control">
+    <Popover label={t("Density")} icon={<SlidersHorizontal size={14} />} className="density-control">
       <div className="density-panel">
         <div className="density-row">
-          <Label tip="Size of the staves on the page. Smaller staves fit more bars on each line and more lines on each page.">
-            Staff size
-          </Label>
+          <Label tip={t("Size of the staves on the page. Smaller staves fit more bars on each line and more lines on each page.")}>{t("Staff size")}</Label>
           <span className="density-value">{Math.round(view.staffSize / DEFAULT_VIEW.staffSize * 100)}%</span>
         </div>
         <input
-          aria-label="Staff size"
+          aria-label={t("Staff size")}
           type="range"
           min={STAFF_MIN}
           max={STAFF_MAX}
@@ -51,11 +47,9 @@ export function ScoreViewControls({ view, onChange }: Props) {
           onKeyUp={event => onChange({ staffSize: Number(event.currentTarget.value) })}
         />
         <div className="density-row">
-          <Label tip="Auto lets the engraver break lines by spacing. A number forces exactly that many bars on every line.">
-            Bars per line
-          </Label>
+          <Label tip={t("Auto lets the engraver break lines by spacing. A number forces exactly that many bars on every line.")}>{t("Bars per line")}</Label>
         </div>
-        <div className="chips" role="radiogroup" aria-label="Bars per line">
+        <div className="chips" role="radiogroup" aria-label={t("Bars per line")}>
           {BARS_PER_LINE.map(count => <button
             key={count}
             type="button"
@@ -63,25 +57,25 @@ export function ScoreViewControls({ view, onChange }: Props) {
             className="chip"
             aria-checked={view.barsPerLine === count}
             onClick={() => onChange({ barsPerLine: count })}
-          >{count === 0 ? 'Auto' : count}</button>)}
+          >{count === 0 ? t("Auto") : count}</button>)}
         </div>
         <button
           type="button"
           className="button ghost small density-reset"
           disabled={!densityChanged}
           onClick={() => onChange({ staffSize: DEFAULT_VIEW.staffSize, barsPerLine: DEFAULT_VIEW.barsPerLine })}
-        ><RotateCcw size={13} />Default</button>
+        ><RotateCcw size={13} />{t("Default")}</button>
       </div>
     </Popover>
 
     <div className="zoom-control glass glass-pill">
-      <button className="icon-button" aria-label="Zoom out" disabled={view.zoom <= ZOOM_MIN} onClick={() => zoomBy(-10)}>
+      <button className="icon-button" aria-label={t("Zoom out")} disabled={view.zoom <= ZOOM_MIN} onClick={() => zoomBy(-10)}>
         <Minus size={14} />
       </button>
-      <button className="zoom-fit" aria-label="Reset zoom to 100%" onClick={() => onChange({ zoom: 100 })}>
+      <button className="zoom-fit" aria-label={t("Reset zoom to 100%")} onClick={() => onChange({ zoom: 100 })}>
         {view.zoom}%
       </button>
-      <button className="icon-button" aria-label="Zoom in" disabled={view.zoom >= ZOOM_MAX} onClick={() => zoomBy(10)}>
+      <button className="icon-button" aria-label={t("Zoom in")} disabled={view.zoom >= ZOOM_MAX} onClick={() => zoomBy(10)}>
         <Plus size={14} />
       </button>
     </div>

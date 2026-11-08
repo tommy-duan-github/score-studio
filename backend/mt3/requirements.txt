@@ -1,0 +1,13 @@
+# YourMT3+ runner environment (.venv-mt3), separate from the main one: YourMT3 pins transformers 4.45 / numpy 1.x,
+# which would downgrade DuET's environment. Install torch + torchaudio first (CPU or CUDA index), then:
+#   .venv-mt3/Scripts/python -m pip install -r backend/mt3/requirements.txt
+transformers==4.45.1
+numpy<2
+lightning>=2.2.1
+einops
+deprecated
+librosa
+mido
+soundfile
+mir_eval
+huggingface_hub<1

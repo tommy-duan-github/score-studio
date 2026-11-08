@@ -3,7 +3,7 @@
 services:
   score-studio:
     build: .
-    image: score-studio:1.1.0
+    image: score-studio:1.2.0
     container_name: score-studio
     restart: unless-stopped
     ports:

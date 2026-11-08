@@ -12,6 +12,8 @@ class Inputs:
     pedal: list
     score: dict
     frames: pd.DataFrame
+    parts: list[dict] | None = None
+    part_of: list[int] | None = None
 
     @classmethod
     def from_prediction(cls, data, score, frames):

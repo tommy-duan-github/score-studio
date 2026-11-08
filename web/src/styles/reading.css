@@ -82,6 +82,8 @@
 .reading-mode .reading-source {
   flex: none;
   padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .reading-mode .reading-source > button {
@@ -211,6 +213,255 @@
 /* InfoTip portals are siblings of the overlay. */
 body:has(.reading-mode) > .tip-bubble {
   z-index: 110;
+}
+
+/* Clear liquid glass: the bar is a thick lens that bends the page at its rim; nothing is frosted
+   or tinted grey. --lens is set by useClearGlass; without SVG backdrop filters it stays a clear pane. */
+.glass.clear::after {
+  backdrop-filter: var(--lens, none);
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgb(var(--glint-rgb) / calc(var(--spec) * .05)), transparent 60%);
+}
+
+.glass.clear::before {
+  background: linear-gradient(160deg, rgb(var(--glass-rgb) / .1), transparent 28%, transparent 72%, rgb(var(--glass-rgb) / .05)),
+    radial-gradient(160px circle at var(--mx, 50%) var(--my, 0%), rgb(var(--glint-rgb) / calc(var(--spec) * .22)), transparent 70%);
+}
+
+.reading-mode .reading-transport.clear {
+  text-shadow: 0 1px 3px rgb(0 0 0 / .7), 0 0 1px rgb(0 0 0 / .5);
+  box-shadow: 0 10px 28px rgb(0 0 0 / .22);
+}
+
+:root[data-theme=light] .reading-mode .reading-transport.clear {
+  text-shadow: 0 0 3px rgb(255 255 255 / .95), 0 0 1px rgb(255 255 255);
+  box-shadow: 0 10px 28px rgb(var(--shade-rgb) / .12);
+}
+
+.reading-mode .reading-transport.clear svg {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / .55));
+}
+
+:root[data-theme=light] .reading-mode .reading-transport.clear svg {
+  filter: drop-shadow(0 0 2px rgb(255 255 255 / .9));
+}
+
+/* Controls on the bar are clear too: no fill and no outline at rest; on hover they light up
+   from the inside (an inner glow and a glint that follows the pointer), never outward. */
+.reading-mode .reading-transport .glass::after,
+.reading-mode .reading-transport .glass::before {
+  display: none;
+}
+
+.reading-mode .reading-transport .dropdown-trigger,
+.reading-mode .reading-transport .icon-button,
+.reading-mode .reading-transpose,
+.reading-mode .reading-transpose > button {
+  background: transparent;
+  box-shadow: none;
+  transition: box-shadow .25s ease, background-color .25s ease, color .2s;
+}
+
+.reading-mode .reading-transport .dropdown-trigger:hover,
+.reading-mode .reading-transport .icon-button:hover:not(:disabled),
+.reading-mode .reading-transpose > button:hover:not(:disabled),
+.reading-mode .reading-transport .dropdown-trigger[aria-expanded=true] {
+  color: var(--text);
+  background: radial-gradient(60px circle at 50% 120%, rgb(var(--glint-rgb) / .14), transparent 70%);
+  box-shadow: inset 0 0 12px rgb(var(--glint-rgb) / .2), inset 0 0 0 1px rgb(var(--glint-rgb) / .12);
+}
+
+:root[data-theme=light] .reading-mode .reading-transport .dropdown-trigger:hover,
+:root[data-theme=light] .reading-mode .reading-transport .icon-button:hover:not(:disabled),
+:root[data-theme=light] .reading-mode .reading-transpose > button:hover:not(:disabled),
+:root[data-theme=light] .reading-mode .reading-transport .dropdown-trigger[aria-expanded=true] {
+  background: radial-gradient(60px circle at 50% 120%, rgb(255 255 255 / .7), transparent 70%);
+  box-shadow: inset 0 0 12px rgb(255 255 255 / .85), inset 0 0 0 1px rgb(255 255 255 / .7);
+}
+
+.reading-mode .reading-transport .dropdown-trigger[aria-expanded=true] {
+  color: var(--accent-text);
+}
+
+.reading-mode .reading-transport .play-button {
+  transition: box-shadow .25s ease, background .25s ease;
+}
+
+.reading-mode .reading-transport .play-button:hover:not(:disabled) {
+  scale: 1;
+  background: var(--accent-strong);
+  box-shadow: inset 0 0 12px rgb(255 255 255 / .45), inset 0 1px 0 rgb(255 255 255 / .35);
+}
+
+.reading-mode .reading-transport .icon-button:active:not(:disabled),
+.reading-mode .reading-transport .button:active:not(:disabled) {
+  scale: .94;
+}
+
+/* Page-turning drop-up: icon only on the bar, chevron pointing up. */
+.reading-mode .reading-flow > .dropdown-trigger > span {
+  display: none;
+}
+
+.reading-mode .reading-flow > .dropdown-trigger > svg:last-child {
+  rotate: 180deg;
+  opacity: .6;
+}
+
+.reading-mode .reading-flow > .popover-panel {
+  right: 0;
+  width: 220px;
+  padding: 6px;
+}
+
+.reading-flow-options {
+  display: grid;
+  gap: 2px;
+}
+
+.reading-flow-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--subtle);
+  font-size: 12.5px;
+  font-weight: 400;
+  text-align: left;
+  transition: background-color .2s, color .2s;
+}
+
+.reading-flow-option > span {
+  flex: 1;
+}
+
+.reading-flow-option:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.reading-flow-option[aria-checked=true],
+.popover-panel .reading-flow-option[aria-checked=true],
+.reading-mode .popover-panel .reading-speed-chips > button[aria-checked=true] {
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.reading-flow-check {
+  flex: none;
+}
+
+.reading-options .reading-flow-options {
+  margin-top: -4px;
+}
+
+.reading-options .reading-flow-option {
+  background: var(--field);
+}
+
+.reading-options .reading-flow-option[aria-checked=true] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgb(var(--peach-rgb) / .35);
+}
+
+/* Sideways scroll: one row, vertically centred. */
+.reading-mode.flow-horizontal .score-canvas,
+.reading-mode.flow-flip .score-canvas {
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.reading-mode.flow-horizontal .score-pages,
+.reading-mode.flow-flip .score-pages {
+  margin: auto;
+  padding-bottom: 0;
+}
+
+/* Page turning: each page owns one viewport width, so exactly one page shows and snapping centres it. */
+.reading-mode.flow-flip .score-canvas {
+  padding-inline: 0;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.reading-mode.flow-flip .score-canvas::-webkit-scrollbar {
+  display: none;
+}
+
+.reading-mode.flow-flip .score-pages {
+  gap: 0;
+}
+
+.reading-mode.flow-flip .paper {
+  margin-inline: max(8px, calc((100vw - var(--reading-page)) / 2));
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+
+/* Tap zones: left third turns back, right third turns forward; the middle stays on the score. */
+.reading-turn {
+  position: fixed;
+  z-index: 5;
+  top: 0;
+  bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  width: 33%;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reading-turn.previous {
+  left: 0;
+  justify-content: flex-start;
+}
+
+.reading-turn.next {
+  right: 0;
+  justify-content: flex-end;
+}
+
+.reading-turn > svg {
+  width: 40px;
+  height: 40px;
+  padding: 9px;
+  border-radius: 50%;
+  opacity: 0;
+  box-shadow: inset 0 0 0 1px rgb(var(--glass-rgb) / .16), inset 0 1px 0 rgb(var(--glass-rgb) / .14);
+  transition: opacity .2s, translate .3s var(--spring);
+}
+
+.reading-turn:hover > svg,
+.reading-turn:focus-visible > svg {
+  opacity: .8;
+}
+
+.reading-turn.previous:active > svg {
+  translate: -3px 0;
+}
+
+.reading-turn.next:active > svg {
+  translate: 3px 0;
+}
+
+.reading-turn:focus-visible {
+  outline: 0;
+}
+
+@media (hover: none) {
+  .reading-turn > svg {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {

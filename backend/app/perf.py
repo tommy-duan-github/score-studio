@@ -235,6 +235,59 @@ def _cpu(pid: int) -> tuple[float, int] | None:
         return None
 
 
+NO_WINDOW = getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0)   # no console flash in the desktop app
+_gpu_static: dict | None = None
+_gpu_cache: tuple[float, dict] = (0.0, {})
+
+
+def _cuda() -> bool:
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def gpu() -> dict:
+    """CUDA GPU summary for the performance panel (nvidia-smi, else torch); cached for 1 s."""
+    global _gpu_static, _gpu_cache
+    import subprocess
+    import time
+    now = time.monotonic()
+    if now - _gpu_cache[0] < 1.0:
+        return _gpu_cache[1]
+    if _gpu_static is None:
+        _gpu_static = dict(cuda=_cuda())
+    out = dict(available=False, name=None, memory_total=None, memory_used=None, utilization=None, driver=None,
+               used_for=[])
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu,driver_version",
+                            "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=3,
+                           creationflags=NO_WINDOW)
+        line = r.stdout.strip().splitlines()[0] if r.returncode == 0 and r.stdout.strip() else ""
+        if line:
+            name, total, used, util, driver = [x.strip() for x in line.split(",")[:5]]
+            num = lambda v: float(v) if v.replace(".", "", 1).isdigit() else None
+            out.update(name=name, driver=driver, utilization=num(util),
+                       memory_total=int(num(total) * 2**20) if num(total) is not None else None,
+                       memory_used=int(num(used) * 2**20) if num(used) is not None else None)
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        pass
+    if out["name"] is None and _gpu_static["cuda"]:
+        try:
+            import torch
+            free, total = torch.cuda.mem_get_info()
+            out.update(name=torch.cuda.get_device_name(0), memory_total=total, memory_used=total - free)
+        except Exception:
+            pass
+    out["available"] = bool(_gpu_static["cuda"])
+    if out["available"]:
+        from . import multi
+        out["used_for"] = ["Piano transcription (Transkun)", "Score model (DuET)"] +             (["Multi-instrument (YourMT3+)"] if multi.available() else [])
+    _gpu_cache = (now, out)
+    return out
+
+
 def status() -> dict:
     from . import worker
     s = settings()
@@ -264,7 +317,9 @@ def status() -> dict:
                     can_raise_priority=sys.platform == "win32" or _can_raise()),
         usage=dict(per_core=[per_core[i] if i < len(per_core) else 0.0 for i in range(max(len(per_core), max(ALLOWED) + 1))],
                    server_cpu=round(server[0], 1), server_rss=server[1],
-                   job=dict(job, cpu=round(child[0], 1), rss=child[1]) if job and child else job),
+                   job=dict(job, cpu=round(child[0], 1), rss=child[1], device="cuda" if _cuda() else "cpu")
+                   if job and child else (dict(job, device="cuda" if _cuda() else "cpu") if job else job)),
+        gpu=gpu(),
     )
 
 

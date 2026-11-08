@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Info } from 'lucide-react';
@@ -11,6 +12,9 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
   const [position, setPosition] = useState({ left: 12, top: 12 });
   useLayoutEffect(() => {
     if (!open || !button.current || !bubble.current) return;
+    // A manual popover joins the top layer above dialog backdrops and fullscreen overlays.
+    bubble.current.setAttribute('popover', 'manual');
+    bubble.current.showPopover?.();
     const box = button.current.getBoundingClientRect();
     const tip = bubble.current.getBoundingClientRect();
     const left = Math.max(12, Math.min(box.left + box.width / 2 - tip.width / 2, innerWidth - tip.width - 12));
@@ -22,15 +26,15 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
     if (!open) return;
     const close = () => setOpen(false);
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
+      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); }
     };
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
-    window.addEventListener('keydown', escape);
+    window.addEventListener('keydown', escape, true);
     return () => {
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close);
-      window.removeEventListener('keydown', escape);
+      window.removeEventListener('keydown', escape, true);
     };
   }, [open]);
 
@@ -39,7 +43,7 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
       ref={button}
       type="button"
       className="info-tip"
-      aria-label={`About ${label}`}
+      aria-label={t("About {0}", [t(label)])}
       aria-describedby={open ? id : undefined}
       aria-expanded={open}
       onMouseEnter={() => setOpen(true)}
@@ -52,14 +56,14 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
       }}
     ><Info size={15} /></button>
     {open && createPortal(
-      <div ref={bubble} id={id} role="tooltip" className="tip-bubble" style={position}>{children}</div>,
-      document.body,
+      <div ref={bubble} id={id} role="tooltip" className="tip-bubble" style={position}>{typeof children === 'string' ? t(children) : children}</div>,
+      button.current?.closest('dialog[open], .reading-mode, .sidebar, .inspector') ?? document.body,
     )}
   </>;
 }
 
 export function Label({ children, tip }: { children: ReactNode; tip?: string }) {
-  return <div className="field-label"><span>{children}</span>{tip && <InfoTip label={String(children)}>{tip}</InfoTip>}</div>;
+  return <div className="field-label"><span>{typeof children === 'string' ? t(children) : children}</span>{tip && <InfoTip label={String(children)}>{t(tip)}</InfoTip>}</div>;
 }
 
 export interface SegmentOption<T> {
@@ -84,7 +88,7 @@ export function Segmented<T extends string | number>({
     ref={ref}
     className={`segmented lens-toggle ${className}`}
     role={tabs ? 'tablist' : 'radiogroup'}
-    aria-label={label}
+    aria-label={t(label)}
     onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
@@ -107,7 +111,7 @@ export function Segmented<T extends string | number>({
       tabIndex={value === option.value || value === undefined ? 0 : -1}
       disabled={disabled || option.disabled}
       onClick={() => onChange(option.value)}
-    >{option.label}</button>)}
+    >{typeof option.label === 'string' ? t(option.label) : option.label}</button>)}
   </div>;
 }
 
@@ -119,7 +123,7 @@ export function Switch({ label, checked, onChange, disabled = false }: {
     if (!disabled) setValue(checked);
   }, [checked, disabled]);
   return <label className="switch">
-    <input type="checkbox" role="switch" aria-label={label} checked={value} disabled={disabled}
+    <input type="checkbox" role="switch" aria-label={t(label)} checked={value} disabled={disabled}
       onChange={event => {
         setValue(event.target.checked);
         onChange(event.target.checked);
@@ -128,8 +132,8 @@ export function Switch({ label, checked, onChange, disabled = false }: {
   </label>;
 }
 
-export function Dropdown({ label, icon, children, className = '', disabled = false }: {
-  label: string; icon?: ReactNode; children: ReactNode; className?: string; disabled?: boolean;
+export function Dropdown({ label, icon, children, className = '', disabled = false, onOpen }: {
+  label: string; icon?: ReactNode; children: ReactNode; className?: string; disabled?: boolean; onOpen?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -145,18 +149,19 @@ export function Dropdown({ label, icon, children, className = '', disabled = fal
     return () => document.removeEventListener('pointerdown', outside);
   }, [open]);
   return <div ref={ref} className={`dropdown ${className}`}>
-    <button ref={trigger} type="button" className="dropdown-trigger glass glass-pill" aria-label={label}
+    <button ref={trigger} type="button" className="dropdown-trigger glass glass-pill" aria-label={t(label)}
       disabled={disabled} aria-haspopup="menu" aria-expanded={open} aria-controls={id}
-      onClick={() => setOpen(current => !current)}
+      onClick={() => { if (!open) onOpen?.(); setOpen(current => !current); }}
       onKeyDown={event => {
         if (event.key === 'ArrowDown') {
           event.preventDefault();
+          if (!open) onOpen?.();
           setOpen(true);
         }
       }}>
-      {icon}<span>{label}</span><ChevronDown size={12} />
+      {icon}<span>{t(label)}</span><ChevronDown size={12} />
     </button>
-    {open && <div id={id} className="dropdown-menu" role="menu" aria-label={label}
+    {open && <div id={id} className="dropdown-menu" role="menu" aria-label={t(label)}
       onClick={event => {
         if ((event.target as Element).closest('button:not(:disabled)')) {
           setOpen(false);
@@ -211,12 +216,12 @@ export function Popover({ label, icon, children, className = '', open: controlle
     return () => document.removeEventListener('pointerdown', outside);
   }, [open]);
   return <div ref={ref} className={`dropdown popover ${className}`}>
-    <button ref={trigger} type="button" className="dropdown-trigger glass glass-pill" aria-label={label}
+    <button ref={trigger} type="button" className="dropdown-trigger glass glass-pill" aria-label={t(label)}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={id}
       onClick={() => setOpen(current => !current)}>
       {icon}<span>{label}</span><ChevronDown size={12} />
     </button>
-    {open && <div id={id} className="dropdown-menu popover-panel" role="dialog" aria-label={label}
+    {open && <div id={id} className="dropdown-menu popover-panel" role="dialog" aria-label={t(label)}
       onKeyDown={event => {
         if (event.key === 'Escape') {
           event.preventDefault();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { DEFAULT_HEADER } from '../lib/verovio';
-import type { LlmConfig, Op, Project, ScoreDoc, ScoreHeader, Settings } from '../lib/types';
+import type { Health, Instruments, LlmConfig, Op, PartOverrides, Project, ScoreDoc, ScoreHeader, Settings } from '../lib/types';
 
 export function useStudio(onError: (message: string) => void) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -10,6 +10,8 @@ export function useStudio(onError: (message: string) => void) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [config, setConfig] = useState<LlmConfig | null>(null);
+  const [multi, setMulti] = useState<Health['multi'] | null>(null);
+  const [modelsReady, setModelsReady] = useState<boolean | null>(null);
   const activeRef = useRef(active);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const pending = useRef(0);
@@ -31,8 +33,11 @@ export function useStudio(onError: (message: string) => void) {
         setProjects(library.value);
         setActive(library.value[0]?.id ?? null);
       } else onError(library.reason.message);
-      if (health.status === 'fulfilled') setConfig(health.value.llm);
-      else onError(health.reason.message);
+      if (health.status === 'fulfilled') {
+        setConfig(health.value.llm);
+        setMulti(health.value.multi ?? null);
+        setModelsReady(health.value.models_ready ?? true);
+      } else onError(health.reason.message);
       setLoading(false);
     });
     return () => {
@@ -112,14 +117,14 @@ export function useStudio(onError: (message: string) => void) {
     return result;
   }, [onError]);
 
-  async function upload(files: File[]) {
+  async function upload(files: File[], mode?: { instruments: Instruments; model?: string }) {
     for (const file of files) {
       if (!/\.(mid|midi|mp3|wav|flac|m4a|ogg)$/i.test(file.name)) {
         onError(`Unsupported file: ${file.name}`);
         continue;
       }
       try {
-        const result = await api.upload(file);
+        const result = await api.upload(file, mode);
         await refresh();
         setActive(result.id);
       } catch (error) {
@@ -174,6 +179,16 @@ export function useStudio(onError: (message: string) => void) {
     return result;
   }
 
+  async function retranscribe(id: string, mode: { instruments: Instruments; model?: string }) {
+    try {
+      const updated = await api.retry(id, mode);
+      setProjects(list => list.map(p => p.id === id ? { ...p, ...updated } : p));
+      if (activeRef.current === id) setDoc(null);
+    } catch (error) {
+      onError((error as Error).message);
+    }
+  }
+
   async function remove(id: string) {
     try {
       await api.remove(id);
@@ -184,9 +199,29 @@ export function useStudio(onError: (message: string) => void) {
     }
   }
 
+  async function removeBatch(body: { ids: string[] } | { all: true }) {
+    await api.deleteProjects(body);
+    const list = await refresh();
+    if (!list.some(item => item.id === activeRef.current)) {
+      setDoc(null);
+      setActive(list[0]?.id ?? null);
+    }
+  }
+
+  const refreshHealth = useCallback(async () => {
+    const health = await api.health();
+    setMulti(health.multi ?? null);
+    setModelsReady(health.models_ready ?? true);
+  }, []);
+
   return {
-    projects, project, active, setActive, doc, loading, busy, config, setConfig,
-    upload, rename, remove, setHeader,
+    projects, project, active, setActive, doc, loading, busy, config, setConfig, multi,
+    upload, rename, remove, removeBatch, refresh, retranscribe, setHeader, modelsReady, setModelsReady, refreshHealth,
+    setParts: (parts: PartOverrides) => doc ? mutate(doc.id, async () => {
+      const updated = await api.setParts(doc.id, parts);
+      setProjects(list => list.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+      return api.doc(doc.id);
+    }) : Promise.resolve(false),
     edit: (ops: Op[], label?: string) => doc
       ? mutate(doc.id, () => api.edit(doc.id, ops, label)) : Promise.resolve(false),
     settings: (settings: Partial<Settings>) => doc

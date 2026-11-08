@@ -187,9 +187,16 @@ def auto_spelling(notes, ctx, rv, log):
 
 
 def auto_runs(notes, ctx, perf, rv, log):
+    all_notes = notes
+    grand = {p['id'] for p in getattr(ctx, 'parts', []) if p['kind'] == 'grand'}
+    notes = [n for n in notes if n.get('part', 'P1') in grand] if hasattr(ctx, 'parts') else notes
     info = {(round(p[0], 3), p[2]): (p[3], p[1] - p[0]) for p in perf}
     for n in notes:
-        n['vel'], n['plen'] = info.get((round(n['t'], 3), n['pitch']), (0, 0))
+        if len(getattr(ctx, 'parts', [])) > 1 and not n.get('added'):
+            p = perf[n['i']]
+            n['vel'], n['plen'] = p[3], p[1] - p[0]
+        else:
+            n['vel'], n['plen'] = info.get((round(n['t'], 3), n['pitch']), (0, 0))
     beat_of = lambda on: ctx.bars.start(ctx.bar_of(on)) + int(on - ctx.bars.start(ctx.bar_of(on)))
     origin = lambda m: ctx.bars.start(m) + (ctx.pickup if m == 0 else 0)
     graces = cuts = 0
@@ -205,7 +212,7 @@ def auto_runs(notes, ctx, perf, rv, log):
                 rv.add('grace', 'low', rv.bars([m]),
                        "A brushed note written as a grace note: right, or a real note of the line?",
                        why, f"{note_id(n)} written as a grace note",
-                       [dict(label='keep', edit=None), dict(label='a normal note', edit={'notes': [{'id': note_id(n), 'grace': False}]})])
+                       [dict(label='keep', edit=None), dict(label='a normal note', edit={'notes': [{'id': note_id(n), 'part': n.get('part', 'P1'), 'grace': False}]})])
             elif 'on' in d:
                 respace.append((n, d, why))
             elif 'dur' in d:
@@ -215,7 +222,7 @@ def auto_runs(notes, ctx, perf, rv, log):
             ms = [ctx.bar_of(n['on']) for n, _, _ in respace]
             edits = []
             for n, d, _ in respace:
-                e = dict(id=note_id(n))
+                e = dict(id=note_id(n), part=n.get('part', 'P1'))
                 m = ctx.bar_of(d['on'])
                 e.update(bar=rv.num(m), beat=str(d['on'] - origin(m)))
                 if 'dur' in d:
@@ -237,12 +244,13 @@ def auto_runs(notes, ctx, perf, rv, log):
                                                                         'span': int(span) if span == int(span) else str(span),
                                                                         'hand': 'RH' if st == 0 else 'LH'}]})])
     log(f"auto runs: {graces} brushed notes as grace notes, {cuts} overlaps cut")
-    return notes
+    return all_notes
 
 
 def displaced(notes, ctx, rv):
     """notes written away from where they were played while their neighbours are on time"""
-    ns = sorted((n for n in notes if not n['grace']), key=lambda n: n['on'])
+    grand = {p['id'] for p in getattr(ctx, 'parts', []) if p['kind'] == 'grand'}
+    ns = sorted((n for n in notes if not n['grace'] and (not hasattr(ctx, 'parts') or n.get('part', 'P1') in grand)), key=lambda n: n['on'])
     p = {id(n): n['x'] - float(n['on']) for n in ns}
     spread = defaultdict(list)
     for n in ns:
@@ -273,5 +281,5 @@ def displaced(notes, ctx, rv):
                f"anticipation / ornament (keep)?",
                f"ids {' '.join(note_id(n) for n in g)}", 'unchanged',
                [dict(label='keep', edit=None),
-                dict(label='move to where it was played', edit={'notes': [dict(id=note_id(n), bar=rv.num(m2), beat=str(to - origin(m2)))
+                dict(label='move to where it was played', edit={'notes': [dict(id=note_id(n), part=n.get('part', 'P1'), bar=rv.num(m2), beat=str(to - origin(m2)))
                                                                           for n in g]})])

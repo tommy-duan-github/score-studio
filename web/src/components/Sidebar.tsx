@@ -1,25 +1,56 @@
+import { t } from '../lib/i18n';
 import { useEffect, useRef, useState } from 'react';
-import { Cpu, FileAudio2, FileMusic, FolderOpen, MoreHorizontal, Music2, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
-import { MOCK } from '../lib/api';
-import type { Project } from '../lib/types';
+import { ChevronRight, Settings, FileAudio2, FileMusic, FolderOpen, MoreHorizontal, Music2, Pencil, Plus, RefreshCw, Trash2, TriangleAlert, Upload, X } from 'lucide-react';
+import type { Health, Instruments, Project } from '../lib/types';
 import { Dropdown, InfoTip } from './Controls';
-import { PerformanceDialog } from './PerformanceDialog';
+import { ModeChooser, type Mode } from './ModeChooser';
 
 interface Props {
   projects: Project[];
   active: string | null;
   loading: boolean;
   onSelect: (id: string) => void;
-  onUpload: (files: File[]) => Promise<void>;
+  onUpload: (files: File[], mode?: { instruments: Instruments; model?: string }) => Promise<void>;
+  /** YourMT3+ availability and checkpoints (null: unknown / not offered). */
+  multi?: Health['multi'] | null;
   onRename: (id: string, title: string) => Promise<void>;
+  onRetranscribe?: (id: string, mode: { instruments: Instruments; model?: string }) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
   onError: (message: string) => void;
+  onSettings: () => void;
+  modelsMissing?: boolean;
+  onStorage?: () => void;
   /** Closes the library drawer (tablet / phone layouts). */
   onClose?: () => void;
 }
 
-export function Sidebar({ projects, active, loading, onSelect, onUpload, onRename, onRemove, onError, onClose }: Props) {
-  const [perfOpen, setPerfOpen] = useState(false);
+const MODEL_KEY = 'score-studio:mt3-model';
+
+function storedModel(): string | undefined {
+  try {
+    return localStorage.getItem(MODEL_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const isAudio = (name: string) => !/\.(mid|midi)$/i.test(name);
+
+export function Sidebar({ projects, active, loading, multi, modelsMissing, onStorage, onSelect, onUpload, onRetranscribe, onRename, onRemove, onError, onClose, onSettings }: Props) {
+  const multiOn = !!multi?.available;
+  const [modelPref, setModelPref] = useState(storedModel);
+  const model = multi?.models.some(m => m.key === modelPref) ? modelPref : multi?.default;
+  const setModel = (value: string) => {
+    setModelPref(value);
+    try {
+      localStorage.setItem(MODEL_KEY, value);
+    } catch { /* per-viewer convenience only */ }
+  };
+  /** Files waiting for the piano / multiple-instruments choice. */
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
+  /** Project waiting for the "Transcribe again" choice. */
+  const [again, setAgain] = useState<Project | null>(null);
+  const [againModel, setAgainModel] = useState<string | undefined>(undefined);
   const input = useRef<HTMLInputElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -45,12 +76,26 @@ export function Sidebar({ projects, active, loading, onSelect, onUpload, onRenam
     else dialog.current?.close();
   }, [action]);
 
-  async function upload(files: File[]) {
-    if (!files.length || uploading) return;
+  async function send(files: File[], mode: Mode) {
     setUploading(true);
-    await onUpload(files);
+    await onUpload(files, mode);
     setUploading(false);
+    setPendingFiles(null);
     if (input.current) input.current.value = '';
+  }
+
+  function upload(files: File[]) {
+    if (!files.length || uploading) return;
+    if (multiOn) setPendingFiles(files);          // ask: piano or multiple instruments
+    else void send(files, { instruments: 'piano' });
+  }
+
+  async function transcribeAgain(mode: Mode) {
+    if (!again) return;
+    setSubmitting(true);
+    await onRetranscribe?.(again.id, mode);
+    setSubmitting(false);
+    setAgain(null);
   }
 
   function openAction(type: 'rename' | 'delete', project: Project) {
@@ -58,18 +103,18 @@ export function Sidebar({ projects, active, loading, onSelect, onUpload, onRenam
     setAction({ type, project });
   }
 
-  return <aside className="sidebar glass" aria-label="Project library" id="library">
-    <div className="brand"><span className="brand-mark"><Music2 size={22} /></span><span>Score Studio</span>
-      <button type="button" className="icon-button drawer-close" aria-label="Close project library" onClick={onClose}><X size={17} /></button>
+  return <aside className="sidebar glass" aria-label={t("Project library")} id="library">
+    <div className="brand"><span className="brand-mark"><Music2 size={22} /></span><span>{t("Score Studio")}</span>
+      <button type="button" className="icon-button drawer-close" aria-label={t("Close project library")} onClick={onClose}><X size={17} /></button>
     </div>
     <div className="upload-heading">
-      <span>New transcription</span>
-      <InfoTip label="file upload">Drop or choose .mid, .midi, .mp3, .wav, .flac, .m4a or .ogg files. Audio and MIDI are transcribed into an editable piano score.</InfoTip>
+      <span>{t("New transcription")}</span>
+      <InfoTip label={t("file upload")}>{t("Drop or choose .mid, .midi, .mp3, .wav, .flac, .m4a or .ogg files. Audio and MIDI are transcribed into an editable piano score.")}</InfoTip>
     </div>
     <input ref={input} type="file" multiple hidden accept=".mid,.midi,.mp3,.wav,.flac,.m4a,.ogg"
       onChange={event => void upload(Array.from(event.target.files ?? []))} />
     <button className={`upload-zone ${dragging ? 'dragover' : ''}`} disabled={uploading}
-      aria-label="New transcription" onClick={() => input.current?.click()}
+      aria-label={t("New transcription")} onClick={() => input.current?.click()}
       onDragOver={event => {
         event.preventDefault();
         setDragging(true);
@@ -83,13 +128,16 @@ export function Sidebar({ projects, active, loading, onSelect, onUpload, onRenam
         void upload(Array.from(event.dataTransfer.files));
       }}>
       <span className="upload-icon"><Upload size={21} /></span>
-      <span>{uploading ? 'Uploading…' : 'Drop audio or MIDI'}</span>
-      <span className="upload-choose"><Plus size={12} /> Choose files</span>
+      <span>{uploading ? t("Uploading…") : t("Drop audio or MIDI")}</span>
+      <span className="upload-choose"><Plus size={12} />{t("Choose files")}</span>
     </button>
-    <div className="library-heading"><FolderOpen size={14} /><h2>Projects</h2><span className="chip">{projects.length}</span></div>
-    <nav className="projects" aria-label="Projects">
-      {loading && <div className="library-empty">Loading projects…</div>}
-      {!loading && !projects.length && <div className="library-empty">No projects</div>}
+    {modelsMissing && <button type="button" className="models-warning" aria-label={t('Models missing — Settings › Storage')} onClick={onStorage}>
+      <TriangleAlert size={16} /><span>{t('Models missing')}<small>{t('Settings › Storage')}</small></span><ChevronRight size={15} />
+    </button>}
+    <div className="library-heading"><FolderOpen size={14} /><h2>{t("Projects")}</h2><span className="chip">{projects.length}</span></div>
+    <nav className="projects" aria-label={t("Projects")}>
+      {loading && <div className="library-empty">{t("Loading projects…")}</div>}
+      {!loading && !projects.length && <div className="library-empty">{t("No projects")}</div>}
       {projects.map(project => {
         const pending = !['ready', 'error'].includes(project.status);
         const Icon = project.source === 'audio' ? FileAudio2 : FileMusic;
@@ -100,26 +148,26 @@ export function Sidebar({ projects, active, loading, onSelect, onUpload, onRenam
               onClose?.();
             }}>
             <span className="project-icon"><Icon size={19} /></span>
-            <span className="project-copy"><strong>{project.title}</strong><small>{project.source === 'audio' ? 'Audio' : 'MIDI'}{project.bars ? ` · ${project.bars} bars` : ''}</small></span>
+            <span className="project-copy"><strong>{project.title}</strong><small>{project.source === 'audio' ? t("Audio") : t("MIDI")}{project.parts?.length ? ` · ${project.parts.map(part => part.name).join(' + ')}` : project.instruments === 'multi' ? t(" · Multi-instrument") : ''}{project.bars ? t(" · {0} bars", [project.bars]) : ''}</small></span>
           </button>
-          <Dropdown label={`Options for ${project.title}`} icon={<MoreHorizontal size={16} />} className="project-menu">
-            <button role="menuitem" onClick={() => openAction('rename', project)}><Pencil size={15} />Rename</button>
-            <button role="menuitem" className="danger" onClick={() => openAction('delete', project)}><Trash2 size={15} />Delete</button>
+          <Dropdown label={t("Options for {0}", [project.title])} icon={<MoreHorizontal size={16} />} className="project-menu">
+            <button role="menuitem" onClick={() => openAction('rename', project)}><Pencil size={15} />{t("Rename")}</button>
+            {multiOn && onRetranscribe && !pending && <button role="menuitem" onClick={() => {
+              setAgainModel(project.mt3_model ?? model);
+              setAgain(project);
+            }}><RefreshCw size={15} />{t("Transcribe again…")}</button>}
+            <button role="menuitem" className="danger" onClick={() => openAction('delete', project)}><Trash2 size={15} />{t("Delete")}</button>
           </Dropdown>
-          <div className="project-state"><span className={`status-chip ${project.status}`}><span />{project.status}</span>{pending && <span>{Math.round((project.progress?.fraction ?? 0) * 100)}%</span>}</div>
+          <div className="project-state"><span className={`status-chip ${project.status}`}><span />{t(project.status)}</span>{pending && <span>{Math.round((project.progress?.fraction ?? 0) * 100)}%</span>}</div>
           {pending && <div className="project-progress">
-            <progress max="1" value={project.progress?.fraction ?? 0} aria-label={`${project.title} progress`} />
-            <small>{project.progress?.message ?? project.progress?.stage ?? 'Queued'}</small>
+            <progress max="1" value={project.progress?.fraction ?? 0} aria-label={t("{0} progress", [project.title])} />
+            <small>{t(project.progress?.message ?? project.progress?.stage ?? 'Queued')}</small>
           </div>}
-          {project.status === 'error' && <small className="project-error">{project.error ?? 'Processing failed'}</small>}
+          {project.status === 'error' && <small className="project-error">{t(project.error ?? "Processing failed")}</small>}
         </div>;
       })}
     </nav>
-    <div className="sidebar-footer"><span className="status-dot" />{MOCK ? 'Mock workspace' : 'Workspace'}
-      <InfoTip label="workspace">{MOCK ? 'Fixture score. Edits and uploads are kept in memory and reset on refresh.' : 'Projects, audio and editing history are stored on the Score Studio backend.'}</InfoTip>
-      {!MOCK && <button type="button" className="chip perf-button" aria-haspopup="dialog" onClick={() => setPerfOpen(true)}><Cpu size={13} />Performance</button>}
-    </div>
-    {!MOCK && <PerformanceDialog open={perfOpen} onClose={() => setPerfOpen(false)} projects={projects} onError={onError} />}
+    <div className="sidebar-footer"><button type="button" className="button ghost small" aria-haspopup="dialog" onClick={onSettings}><Settings size={16} />{t("Settings")}</button></div>
     <dialog ref={dialog} className="dialog glass" onCancel={() => setAction(null)}
       onClick={event => {
         if (event.target === dialog.current) setAction(null);
@@ -132,12 +180,22 @@ export function Sidebar({ projects, active, loading, onSelect, onUpload, onRenam
         setSubmitting(false);
         setAction(null);
       }}>
-        <div className="dialog-heading"><h2 id="project-action-title">{action.type === 'rename' ? 'Rename project' : 'Delete project?'}</h2><button type="button" className="icon-button" aria-label="Close" onClick={() => setAction(null)}><X size={17} /></button></div>
+        <div className="dialog-heading"><h2 id="project-action-title">{action.type === 'rename' ? t("Rename project") : t("Delete project?")}</h2><button type="button" className="icon-button" aria-label={t("Close")} onClick={() => setAction(null)}><X size={17} /></button></div>
         {action.type === 'rename'
-          ? <label className="field">Name<input autoFocus required aria-label="New project name" value={title} onChange={event => setTitle(event.target.value)} /></label>
-          : <p>Delete “{action.project.title}” and its editing history?</p>}
-        <div className="dialog-actions"><button type="button" className="button ghost small" onClick={() => setAction(null)}>Cancel</button><button className="button primary small" disabled={submitting || (action.type === 'rename' && !title.trim())}>{action.type === 'rename' ? 'Save' : 'Delete'}</button></div>
+          ? <label className="field">{t("Name")}<input autoFocus required aria-label={t("New project name")} value={title} onChange={event => setTitle(event.target.value)} /></label>
+          : <p>{t("Delete “")}{action.project.title}{t("” and its editing history?")}</p>}
+        <div className="dialog-actions"><button type="button" className="button ghost small" onClick={() => setAction(null)}>{t("Cancel")}</button><button className="button primary small" disabled={submitting || (action.type === 'rename' && !title.trim())}>{action.type === 'rename' ? t("Save") : t("Delete")}</button></div>
       </form>}
     </dialog>
+    {multiOn && <ModeChooser open={!!pendingFiles} title={t("New transcription")} files={(pendingFiles ?? []).map(f => f.name)}
+      model={model} multi={multi!} busy={uploading} audio={(pendingFiles ?? []).some(f => isAudio(f.name))}
+      onModel={setModel} onChoose={mode => void send(pendingFiles ?? [], mode)}
+      onCancel={() => {
+        setPendingFiles(null);
+        if (input.current) input.current.value = '';
+      }} />}
+    {multiOn && <ModeChooser open={!!again} title={t("Transcribe again")} files={[]} current={again?.instruments ?? 'piano'}
+      model={againModel ?? model} multi={multi!} busy={submitting} audio={again?.source === 'audio'}
+      onModel={setAgainModel} onChoose={mode => void transcribeAgain(mode)} onCancel={() => setAgain(null)} />}
   </aside>;
 }

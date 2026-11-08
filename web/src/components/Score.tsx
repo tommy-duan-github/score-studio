@@ -1,11 +1,14 @@
+import { t } from '../lib/i18n';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { DEFAULT_HEADER, engrave, noteId } from '../lib/verovio';
-import type { ScoreDoc } from '../lib/types';
+import { PartNames } from './PartNames';
+import type { PartOverrides, ScoreDoc } from '../lib/types';
 import { PAGE_BASE_WIDTH, ZOOM_MAX, ZOOM_MIN, clamp, type ViewPrefs } from '../lib/view';
 
 interface Props {
   doc: ScoreDoc;
+  onParts?: (patch: PartOverrides) => unknown;
   selection: number[];
   onSelect: (ids: number[]) => void;
   quarter: number;
@@ -23,7 +26,7 @@ interface Props {
 
 interface Rectangle { x: number; y: number; width: number; height: number }
 
-export function Score({ doc, selection, onSelect, quarter, playing, preview, view, onZoom, onSeek, onError, transpose = 0, onEditHeader }: Props) {
+export function Score({ doc, selection, onSelect, quarter, playing, preview, view, onZoom, onSeek, onError, transpose = 0, onEditHeader, onParts }: Props) {
   const [pages, setPages] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -186,12 +189,27 @@ export function Score({ doc, selection, onSelect, quarter, playing, preview, vie
     if (note && !playing) onSeek(note.on);
   }
 
-  return <div className={`score-canvas layout-${view.layout}`} ref={root} data-project-id={doc.id} aria-label="Score pages" tabIndex={-1}
+  return <div className={`score-canvas layout-${view.layout}`} ref={root} data-project-id={doc.id} aria-label={t("Score pages")} tabIndex={-1}
+    onDoubleClick={event => {
+      if (!onParts) return;
+      const label = (event.target as Element).closest('g.label');
+      if (!label) return;
+      const normalized = (value: string) => value.replace(/\s+/g, ' ').trim();
+      const text = normalized(label.textContent ?? '');
+      const labels = Array.from(label.closest('g.system')?.querySelectorAll('g.label') ?? [])
+        .filter(item => normalized(item.textContent ?? '') === text);
+      const matches = doc.parts?.filter(part => normalized(part.name) === text);
+      const part = matches?.[Math.max(0, labels.indexOf(label))];
+      if (part) {
+        const chip = label.closest('.paper')?.querySelector<HTMLElement>('[data-part-id="' + CSS.escape(part.id) + '"] .inline-name');
+        chip?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      }
+    }}
     onScroll={() => {
       scroll.current = { top: root.current?.scrollTop ?? 0, left: root.current?.scrollLeft ?? 0 };
     }}
     onPointerDown={event => {
-      if (event.button !== 0 || (event.target as Element).closest('button')) return;
+      if (event.button !== 0 || (event.target as Element).closest('button, input, .inline-name, g.label')) return;
       event.currentTarget.focus({ preventScroll: true });
       drag.current = { x: event.clientX, y: event.clientY, shift: event.shiftKey };
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -229,12 +247,12 @@ export function Score({ doc, selection, onSelect, quarter, playing, preview, vie
       drag.current = null;
       setRectangle(null);
     }}>
-    {loading && <div className="render-status glass glass-pill" role="status"><span className="spinner" />Engraving…</div>}
-    {failed && <div className="score-error"><span>Score rendering failed</span><button className="button ghost small" onClick={() => setAttempt(value => value + 1)}>Retry</button></div>}
+    {loading && <div className="render-status glass glass-pill" role="status"><span className="spinner" />{t("Engraving…")}</div>}
+    {failed && <div className="score-error"><span>{t("Score rendering failed")}</span><button className="button ghost small" onClick={() => setAttempt(value => value + 1)}>{t("Retry")}</button></div>}
     <div className="score-pages">
-      {pages.map((svg, index) => <article className="paper" key={index} aria-label={`Score page ${index + 1}`}
+      {pages.map((svg, index) => <article className="paper" key={index} aria-label={t("Score page {0}", [index + 1])}
         style={{ width: pageWidth }}>
-        <div className="paper-heading"><span>{doc.header?.title || doc.title}</span><span>Piano</span></div>
+        <div className="paper-heading"><span>{doc.header?.title || doc.title}</span><PartNames parts={doc.parts} onChange={onParts} /></div>
         <div className="engraving" dangerouslySetInnerHTML={{ __html: svg }} />
         <div className="paper-footer"><span>{index + 1}</span><span>{pages.length}</span></div>
       </article>)}

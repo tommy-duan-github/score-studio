@@ -11,7 +11,27 @@ export interface Project {
   error?: string | null;
   has_audio?: boolean;
   version?: number;
+  /** 'multi': one score part per detected instrument (YourMT3+ / MIDI tracks). */
+  instruments?: Instruments;
+  mt3_model?: string | null;
+  parts?: { id: string; name: string; notes: number }[] | null;
 }
+
+export type Instruments = 'piano' | 'multi';
+
+/** A score part. `staves` are the global 1-based staff numbers used by notes' `staff`. */
+export interface Part {
+  id: string;
+  name: string;
+  program: number;
+  kind: 'grand' | 'single';
+  clef: string;
+  staves: number[];
+}
+
+export type PartPatch = Partial<Pick<Part, 'name' | 'program'>> & { clef?: 'G' | 'F' | 'C' };
+export type PartOverrides = Record<string, PartPatch | null>;
+export interface Instrument { name: string; program: number; clef: 'G' | 'F' | 'C'; kind: Part['kind'] }
 
 export interface Settings {
   max_voices: number;
@@ -41,6 +61,8 @@ export interface Note {
   perf_off: number;
   velocity: number;
   edited: string[];
+  /** Part id (multi-instrument scores). */
+  part?: string;
 }
 
 export interface Measure {
@@ -86,12 +108,13 @@ export interface ScoreDoc {
   timemap: [number, number][];
   review: Review[];
   history: { can_undo: boolean; can_redo: boolean; edits: number };
+  parts?: Part[];
 }
 
 type NoteOp<T extends string, Fields = object> = { op: T; ids: number[] } & Fields;
 
 export type Op =
-  | NoteOp<'set_staff', { staff: 1 | 2 }>
+  | NoteOp<'set_staff', { staff: number }>
   | NoteOp<'set_voice', { voice: number }>
   | NoteOp<'set_duration', { dur: number }>
   | NoteOp<'shift', { delta: number }>
@@ -111,12 +134,26 @@ export interface LlmConfig {
 }
 
 export interface Health {
+  models_ready?: boolean;
   ok: boolean;
   version: string;
   cuda: boolean;
   llm: LlmConfig;
   docker?: boolean;
   mcp?: boolean;
+  multi?: { available: boolean; default: string; models: { key: string; label: string }[] };
+}
+
+export interface Model {
+  key: string; name: string; purpose: string; required: boolean; recommended: boolean;
+  installed: boolean; managed: boolean; bytes: number | null; download_bytes: number | null;
+  source: string; state: 'idle' | 'queued' | 'downloading' | 'error'; progress: number | null; error: string | null;
+}
+export interface ModelsStatus { ready: boolean; downloading: boolean; models: Model[] }
+export interface StorageUsage {
+  data_dir: string; disk_free: number; disk_total: number;
+  projects: { bytes: number; count: number; items: (Pick<Project, 'id' | 'title' | 'source' | 'status' | 'created'> & { bytes: number })[] };
+  models: { bytes: number }; app: { bytes: number | null };
 }
 
 export type PerfPreset = 'eco' | 'balanced' | 'full' | 'custom';
@@ -136,6 +173,10 @@ export interface PerfEffective {
 }
 
 export interface PerfStatus {
+  gpu: {
+    available: boolean; name: string | null; memory_total: number | null; memory_used: number | null;
+    utilization: number | null; driver: string | null; used_for: string[];
+  };
   settings: PerfSettings;
   effective: PerfEffective;
   presets: Record<Exclude<PerfPreset, 'custom'>, PerfEffective>;
@@ -154,7 +195,7 @@ export interface PerfStatus {
     per_core: number[];
     server_cpu: number;
     server_rss: number;
-    job: { project: string; pid: number; started: string; cpu?: number; rss?: number } | null;
+    job: { project: string; pid: number; started: string; cpu?: number; rss?: number; device: 'cuda' | 'cpu' | null } | null;
   };
 }
 

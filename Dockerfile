@@ -1,5 +1,5 @@
 # Score Studio — piano audio/MIDI -> editable score. CPU-only image (linux/amd64).
-#   docker build -t score-studio:1.1.0 .
+#   docker build -t score-studio:1.2.0 .
 # DuET (code + weights) and Transkun are downloaded during the build; nothing model-related lives in the repo.
 
 # ---------------------------------------------------------------- web UI
@@ -17,7 +17,7 @@ RUN npm run build
 FROM python:3.12-slim-bookworm
 LABEL org.opencontainers.image.title="Score Studio" \
       org.opencontainers.image.description="Piano audio/MIDI to an editable score (Transkun v2 + DuET), with MCP for AI agents" \
-      org.opencontainers.image.version="1.1.0" \
+      org.opencontainers.image.version="1.2.0" \
       org.opencontainers.image.licenses="MIT code; DuET weights CC BY-NC 4.0 (non-commercial)"
 
 ARG TORCH_VERSION=2.11.0
@@ -44,6 +44,21 @@ ENV HF_HOME=/opt/hf
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('Wayne42/DuET', revision='${DUET_REVISION}')" \
     && chmod -R a+rX /opt/hf
 
+# Optional, experimental: multi-instrument transcription (YourMT3+) in its own venv (it pins transformers 4.45 /
+# numpy 1.x); the venv sees the image's CPU torch (--system-site-packages) instead of installing a second copy.
+# Adds ~1 GB plus ~0.5 GB per checkpoint, and is slow on CPU (several minutes per minute of music).
+#   docker build --build-arg WITH_MT3=1 [--build-arg MT3_MODELS="yptf-multi-ps moe-nops"] .
+ARG WITH_MT3=0
+ARG MT3_MODELS=yptf-multi-ps
+# Only the YourMT3+ setup files go in first, so a backend code change doesn't rebuild this (slow) layer.
+COPY backend/mt3/requirements.txt backend/mt3/download.py /app/backend/mt3/
+RUN if [ "$WITH_MT3" = "1" ]; then \
+        python -m venv --system-site-packages /opt/venv-mt3 \
+        && /opt/venv-mt3/bin/pip install -r /app/backend/mt3/requirements.txt \
+        && /opt/venv-mt3/bin/python /app/backend/mt3/download.py --dest /opt/yourmt3 --models ${MT3_MODELS} \
+        && chmod -R a+rX /opt/venv-mt3 /opt/yourmt3; \
+    fi
+ENV YOURMT3_HOME=/opt/yourmt3
 COPY backend /app/backend
 COPY --from=web /web/dist /app/web/dist
 COPY docker/entrypoint.sh /usr/local/bin/score-studio-entrypoint

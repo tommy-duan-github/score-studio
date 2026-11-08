@@ -79,6 +79,19 @@ Reply ONLY with a JSON object:
 Give 0–4 proposals. If the request is only a question, answer it and return an empty proposals list."""
 
 
+def staff_label(doc: dict, staff: int) -> str:
+    """RH / LH for a piano score; multi-instrument scores: the part name (+ RH/LH on keyboard parts)."""
+    parts = doc.get("parts") or []
+    if len(parts) <= 1 and (not parts or parts[0].get("kind") == "grand"):
+        return "RH" if staff == 1 else "LH"
+    for p in parts:
+        if staff in p["staves"]:
+            if len(p["staves"]) == 2:
+                return f"{p['name']} {'RH' if staff == p['staves'][0] else 'LH'} (staff {staff})"
+            return f"{p['name']} (staff {staff})"
+    return f"staff {staff}"
+
+
 def score_view(doc: dict, measures: list[int]) -> str:
     by_m = {m["index"]: m for m in doc["measures"]}
     lines = []
@@ -98,7 +111,7 @@ def score_view(doc: dict, measures: list[int]) -> str:
             for (beat, dur, grace), grp in sorted(groups[(staff, voice)].items(), key=lambda kv: (kv[0][0], not kv[0][2])):
                 names = ", ".join(f"{n['id']} {n['name']}" for n in sorted(grp, key=lambda n: -n["pitch"]))
                 evs.append(f"[{names}]@{beat:g}~{dur:g}{' g' if grace else ''}")
-            lines.append(f"  {'RH' if staff == 1 else 'LH'} v{voice}: " + "  ".join(evs))
+            lines.append(f"  {staff_label(doc, staff)} v{voice}: " + "  ".join(evs))
         if not ns:
             lines.append("  (empty)")
     return "\n".join(lines)

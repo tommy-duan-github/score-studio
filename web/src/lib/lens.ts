@@ -6,7 +6,9 @@ export const lensSupported = /Chrome\/|Chromium\/|Edg\//.test(navigator.userAgen
 
 // Liquid-glass optics: convex bezel, flat centre, RGB dispersion and specular rim.
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
-function lensImages(width: number, height: number, radius: number) {
+/** bezel: rim width in px (default: thin, for small thumbs); depth: glass thickness relative to the bezel; rim: specular strength. */
+export type LensOptions = { bezel?: number; depth?: number; rim?: number };
+function lensImages(width: number, height: number, radius: number, options: LensOptions = {}) {
   const light = getComputedStyle(document.documentElement).getPropertyValue('--glint-rgb').trim().split(/\s+/).map(Number);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(2, Math.ceil(width));
@@ -16,8 +18,8 @@ function lensImages(width: number, height: number, radius: number) {
   const map = context.createImageData(canvas.width, canvas.height);
   const rim = context.createImageData(canvas.width, canvas.height);
   // A thin bezel: magnification hugs the rim and the centre stays undistorted.
-  const bezel = Math.min(Math.min(width, height) / 2, Math.max(6, Math.min(height * .26, 11)));
-  const thickness = bezel * 1.5;
+  const bezel = Math.min(Math.min(width, height) / 2, options.bezel ?? Math.max(6, Math.min(height * .26, 11)));
+  const thickness = bezel * (options.depth ?? 1.5);
   const profile = (t: number) => (1 - (1 - clamp01(t)) ** 4) ** .25;
   for (let y = 0;y < canvas.height;y++) {
     for (let x = 0;x < canvas.width;x++) {
@@ -51,7 +53,7 @@ function lensImages(width: number, height: number, radius: number) {
       rim.data[k] = light[0];
       rim.data[k + 1] = light[1];
       rim.data[k + 2] = light[2];
-      rim.data[k + 3] = Math.round(edge * .28 * Math.min(1, facing) ** 2 * 255);
+      rim.data[k + 3] = Math.round(edge * (options.rim ?? .28) * Math.min(1, facing) ** 2 * 255);
     }
   }
   context.putImageData(map, 0, 0);
@@ -64,10 +66,10 @@ function svgNode(tag: string, attributes: Record<string, string | number>) {
   for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
   return node;
 }
-export function lensFilter(defs: SVGDefsElement, width: number, height: number, radius: number) {
-  const key = `${Math.round(width)}x${Math.round(height)}r${Math.round(radius)}:${document.documentElement.dataset.theme}`;
+export function lensFilter(defs: SVGDefsElement, width: number, height: number, radius: number, options: LensOptions = {}) {
+  const key = `${Math.round(width)}x${Math.round(height)}r${Math.round(radius)}:${document.documentElement.dataset.theme}:${JSON.stringify(options)}`;
   if (lensCache.has(key)) return lensCache.get(key);
-  const maps = lensImages(Math.round(width), Math.round(height), Math.round(radius));
+  const maps = lensImages(Math.round(width), Math.round(height), Math.round(radius), options);
   if (!maps) return null;
   const id = `lens-${lensCache.size + 1}`;
   const filter = svgNode('filter', {

@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 async function openScore(page: Page) {
   await page.goto('/?mock=1');
-  await expect(page.getByLabel('Project title')).toHaveValue('Winter Wind');
+  await expect(page.getByLabel('Project title')).toHaveText('Winter Wind');
   await expect(page.locator('.paper svg').first()).toBeVisible({ timeout: 90000 });
   await expect(page.locator('.render-status')).toHaveCount(0);
 }
@@ -37,12 +37,14 @@ test('engraving, all selection modes, optics, themes and responsive fit', async 
   await page.mouse.move(box.x + box.width + 3, box.y + box.height + 3, { steps: 6 });
   await page.mouse.up();
   await expect(first).toHaveClass(/selected/);
-  await page.getByRole('button', { name: 'System', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'Dark', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('radio', { name: 'Dark', exact: true }).click();
+  await page.getByRole('button', { name: 'Close settings', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.screenshot({ path: 'test-results/studio-dark.png' });
-  await page.getByRole('button', { name: 'Dark', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'Light', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('radio', { name: 'Light', exact: true }).click();
+  await page.getByRole('button', { name: 'Close settings', exact: true }).click();
   await page.getByRole('button', { name: 'About keyboard shortcuts', exact: true }).focus();
   const tip = page.getByRole('tooltip');
   await expect(tip).toContainText('Space');
@@ -121,7 +123,7 @@ test('review, settings, assistant setup, preview and apply', async ({ page }) =>
   await saved(page, 2);
   await expect(page.locator('.review-card.resolved')).toHaveCount(1);
   await page.screenshot({ path: 'test-results/studio-review.png' });
-  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'Engraving', exact: true }).click();
   await expect(page.getByRole('radio', { name: '3', exact: true })).toBeChecked();
   await page.getByRole('switch', { name: 'Automatic spelling' }).uncheck();
   await saved(page, 3);
@@ -149,7 +151,8 @@ test('review, settings, assistant setup, preview and apply', async ({ page }) =>
 test('upload polling, rename, delete, exports and print-only score', async ({ page }) => {
   await openScore(page);
   await page.locator('input[type=file]').setInputFiles({ name: 'Practice.mid', mimeType: 'audio/midi', buffer: Buffer.from('fixture') });
-  await expect(page.getByLabel('Project title')).toHaveValue('Practice');
+  await page.getByRole('dialog', { name: 'New transcription' }).getByRole('button', { name: 'Piano', exact: true }).click();
+  await expect(page.getByLabel('Project title')).toHaveText('Practice');
   await expect(page.locator('.project-item.active progress')).toBeAttached();
   await expect(page.locator('.paper svg').first()).toBeVisible({ timeout: 20000 });
   await expect(page.locator('.project-item.active .status-chip')).toHaveText('ready');
@@ -157,7 +160,7 @@ test('upload polling, rename, delete, exports and print-only score', async ({ pa
   await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
   await page.getByLabel('New project name').fill('Practice score');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByLabel('Project title')).toHaveValue('Practice score');
+  await expect(page.getByLabel('Project title')).toHaveText('Practice score');
   for (const format of ['MusicXML', 'MIDI']) {
     await page.getByRole('button', { name: 'Export', exact: true }).click();
     const download = page.waitForEvent('download');
@@ -174,7 +177,7 @@ test('upload polling, rename, delete, exports and print-only score', async ({ pa
   await page.getByRole('button', { name: 'Options for Practice score', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect(page.locator('.project-item')).toHaveCount(2);
+  await expect(page.locator('.project-item')).toHaveCount(3);
 });
 
 test('title block, reading mode, drawers and one PDF sheet per page', async ({ page }) => {

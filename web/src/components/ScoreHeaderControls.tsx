@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { useEffect, useRef, useState } from 'react';
 import { Heading, RotateCcw } from 'lucide-react';
 import { Label, Popover, Switch } from './Controls';
@@ -46,19 +47,17 @@ export function ScoreHeaderControls({ doc, onChange, open, onOpenChange }: Props
   }, [open]);
   const changed = FIELDS.some(({ size }) => header[size] !== DEFAULT_HEADER[size]);
 
-  return <Popover label="Title" icon={<Heading size={14} />} className="header-control" open={open} onOpenChange={onOpenChange}>
+  return <Popover label={t("Title")} icon={<Heading size={14} />} className="header-control" open={open} onOpenChange={onOpenChange}>
     <div className="density-panel header-panel">
       <div className="density-row">
-        <Label tip="Title block engraved at the top of page 1, printed to PDF and written to MusicXML exports. An empty title uses the project name. Sizes are relative to normal text (100% ≈ 12 pt).">
-          Title block
-        </Label>
-        <Switch label="Show title block" checked={header.show} onChange={show => onChange({ show })} />
+        <Label tip={t("Edit the title block on page 1 and in PDF/MusicXML exports; an empty title uses the project name. Sizes are relative to normal text (100% ≈ 12 pt).")}>{t("Title block")}</Label>
+        <Switch label={t("Show title block")} checked={header.show} onChange={show => onChange({ show })} />
       </div>
       {FIELDS.map(({ text, size, label, min, max }) => <div className="header-field" key={text}>
         <label className="field">
-          <span className="header-field-label"><span>{label}</span><span className="density-value">{draft[size]}%</span></span>
+          <span className="header-field-label"><span>{t(label)}</span><span className="density-value">{draft[size]}%</span></span>
           <input
-            aria-label={label}
+            aria-label={t(label)}
             value={draft[text]}
             placeholder={text === 'title' ? doc.title : ''}
             maxLength={text === 'subtitle' ? 300 : 200}
@@ -72,7 +71,7 @@ export function ScoreHeaderControls({ doc, onChange, open, onOpenChange }: Props
           />
         </label>
         <input
-          aria-label={`${label} size`}
+          aria-label={t("{0} size", [t(label)])}
           type="range"
           min={min}
           max={max}
@@ -90,7 +89,7 @@ export function ScoreHeaderControls({ doc, onChange, open, onOpenChange }: Props
         className="button ghost small density-reset"
         disabled={!changed || !header.show}
         onClick={() => onChange({ title_size: DEFAULT_HEADER.title_size, subtitle_size: DEFAULT_HEADER.subtitle_size, composer_size: DEFAULT_HEADER.composer_size })}
-      ><RotateCcw size={13} />Default sizes</button>
+      ><RotateCcw size={13} />{t("Default sizes")}</button>
     </div>
   </Popover>;
 }

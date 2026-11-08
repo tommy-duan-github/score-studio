@@ -20,3 +20,6 @@ third_party/DuET/build
 third_party/DuET/demo
 third_party/DuET/tests
 *.bat
+third_party/YourMT3
+.venv-mt3
+tools/fixtures

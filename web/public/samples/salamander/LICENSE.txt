@@ -1,0 +1,3 @@
+Salamander Grand Piano V3 (subset, 23 notes, via https://tonejs.github.io/audio/salamander/)
+by Alexander Holm — Creative Commons Attribution 3.0 (CC BY 3.0).
+https://archive.org/details/SalamanderGrandPianoV3
